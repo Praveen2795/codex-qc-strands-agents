@@ -1,0 +1,102 @@
+[
+  {
+    "account_number": "100001",
+    "tag_type": "SIF",
+    "tag_date": "2026-02-10"
+  },
+  {
+    "account_number": "100001",
+    "tag_type": "SIF",
+    "tag_date": "2026-02-16"
+  },
+  {
+    "account_number": "100001",
+    "tag_type": "VIP",
+    "tag_date": "2026-02-12"
+  },
+  {
+    "account_number": "100003",
+    "tag_type": "SIF",
+    "tag_date": "2026-02-14"
+  },
+  {
+    "account_number": "100004",
+    "tag_type": "MANUAL_REVIEW",
+    "tag_date": "2026-02-16"
+  },
+  {
+    "account_number": "100005",
+    "tag_type": "SIF",
+    "tag_date": "2026-02-18"
+  },
+  {
+    "account_number": "100005",
+    "tag_type": "SIF",
+    "tag_date": "2026-02-19"
+  },
+  {
+    "account_number": "100006",
+    "tag_type": "FOLLOW_UP",
+    "tag_date": "2026-02-19"
+  },
+  {
+    "account_number": "100008",
+    "tag_type": "MANUAL_REVIEW",
+    "tag_date": "2026-02-18"
+  },
+  {
+    "account_number": "100009",
+    "tag_type": "SIF",
+    "tag_date": "2026-02-11"
+  },
+  {
+    "account_number": "100009",
+    "tag_type": "SIF",
+    "tag_date": "2026-02-19"
+  },
+  {
+    "account_number": "100009",
+    "tag_type": "HOLD",
+    "tag_date": "2026-02-12"
+  },
+  {
+    "account_number": "100010",
+    "tag_type": "SIF",
+    "tag_date": null
+  },
+  {
+    "account_number": "100011",
+    "tag_type": "SIF",
+    "tag_date": null
+  },
+  {
+    "account_number": "100011",
+    "tag_type": "BANKRUPTCY",
+    "tag_date": "2026-02-12"
+  },
+  {
+    "account_number": "100013",
+    "tag_type": "FOLLOW_UP",
+    "tag_date": "2026-02-22"
+  },
+  {
+    "account_number": "100013",
+    "tag_type": "ESCALATED",
+    "tag_date": "2026-02-23"
+  },
+  {
+    "account_number": "100014",
+    "tag_type": "SIF",
+    "tag_date": "2026-02-20"
+  },
+  {
+    "account_number": "100016",
+    "tag_type": "PAYMENT_PLAN",
+    "tag_date": "2026-02-24"
+  },
+  {
+    "account_number": "199001",
+    "tag_type": "SIF",
+    "tag_date": "2026-02-25"
+  }
+]

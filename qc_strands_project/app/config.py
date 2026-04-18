@@ -10,6 +10,7 @@ APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parent
 PROMPTS_DIR = APP_DIR / "prompts"
 SCHEMAS_DIR = APP_DIR / "schemas"
+LOGS_DIR = PROJECT_ROOT / "logs"
 
 
 def load_prompt(filename: str) -> str:
@@ -38,6 +39,55 @@ def parse_json_response_text(payload: str) -> dict[str, Any]:
         normalized = normalized[4:].strip()
 
     return json.loads(normalized)
+
+
+def compact_procedure_for_llm(procedure: dict) -> dict:
+    """Return a token-efficient subset of a procedure document for LLM context.
+
+    Strips verbose descriptions, hints, and notes that are only useful for human
+    readers. Keeps only the fields the orchestrator needs to navigate the flow:
+    step IDs, types, agent roles, tool names, depends_on, and rule IDs.
+    """
+    def _slim_step(step: dict) -> dict:
+        return {k: step[k] for k in (
+            "step_id", "step_type", "title", "preferred_agent",
+            "evidence_tools", "depends_on", "evaluation_rule_ids", "decision_policy",
+        ) if k in step}
+
+    def _slim_rule(rule: dict) -> dict:
+        return {k: rule[k] for k in (
+            "rule_id", "title", "applies_to_step", "allowed_decisions",
+        ) if k in rule}
+
+    def _slim_agent(agent: dict) -> dict:
+        return {k: agent[k] for k in ("role", "tool_name") if k in agent}
+
+    compact: dict = {
+        "qc_name": procedure.get("qc_name"),
+        "procedure_name": procedure.get("procedure_name"),
+        "unit_of_work": procedure.get("unit_of_work"),
+        "orchestration_mode": procedure.get("orchestration_mode"),
+        "agents": [_slim_agent(a) for a in procedure.get("agents", [])],
+        "population_phase": {
+            "steps": [_slim_step(s) for s in procedure.get("population_phase", {}).get("steps", [])],
+        },
+        "account_phase": {
+            "iteration": procedure.get("account_phase", {}).get("iteration"),
+            "steps": [_slim_step(s) for s in procedure.get("account_phase", {}).get("steps", [])],
+        },
+        "evaluation_rules": [_slim_rule(r) for r in procedure.get("evaluation_rules", [])],
+        "decision_policy": {
+            k: procedure.get("decision_policy", {}).get(k)
+            for k in (
+                "step_decisions_enabled", "final_decision_enabled",
+                "dynamic_decision_invocation", "step_aggregation_policy",
+                "final_aggregation_policy", "allowed_step_outcomes", "allowed_final_outcomes",
+            )
+            if k in procedure.get("decision_policy", {})
+        },
+        "checkpoint_scope": procedure.get("checkpoint_scope", {}),
+    }
+    return compact
 
 
 def normalize_agent_tool_output(payload: Any) -> Any:

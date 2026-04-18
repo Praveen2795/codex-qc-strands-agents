@@ -43,3 +43,27 @@ The local demo currently validates this path:
 4. select the first account only
 5. call the QC validation agent for evidence collection
 6. print structured outputs
+
+## Local Edge Cases
+
+The local data layer is intentionally mixed so the agent flow can be stress-tested before real integrations.
+
+- `100001`: clean settled case
+- `100002`: clean not-settled case
+- `100003`: contradiction where population says `N` but SIF tag exists
+- `100004`: no direct AR evidence, latest comment strongly implies settlement
+- `100005`: ambiguous latest comment with otherwise positive-looking data
+- `100006`: multiple comments where the latest weaker comment should drive fallback review
+- `100007`: population says `Y` but downstream evidence is sparse
+- `100008`: population says `N` but latest comment strongly implies settlement
+- `100009`: multiple historical positive records across tags and AR logs
+- `100010`: incomplete downstream rows with missing tag date and null AR message
+- `100011`: partial SIF evidence with missing tag date
+- `100012`: population-only account with no downstream records
+- `100013`: downstream noise only, no QC-relevant evidence
+- `100014`: ambiguous historical comments with a weak latest comment
+- `100015`: customer-reported future zero balance language
+- `100016`: direct AR log contradiction against population `N`
+- `199001`: noise account that exists downstream but not in population
+
+See `app/data/test_case_catalog.json` for the full scenario mapping and testing purpose of each sample account.

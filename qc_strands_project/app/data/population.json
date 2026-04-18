@@ -1,0 +1,114 @@
+[
+  {
+    "account_number": "100001",
+    "settlement_flag": "Y",
+    "borrower": "Alex Johnson",
+    "co_borrower": "Jamie Johnson",
+    "as_of_date": "2026-02-15"
+  },
+  {
+    "account_number": "100002",
+    "settlement_flag": "N",
+    "borrower": "Taylor Smith",
+    "co_borrower": "Jordan Smith",
+    "as_of_date": "2026-02-15"
+  },
+  {
+    "account_number": "100003",
+    "settlement_flag": "N",
+    "borrower": "Morgan Lee",
+    "co_borrower": "Casey Lee",
+    "as_of_date": "2026-02-16"
+  },
+  {
+    "account_number": "100004",
+    "settlement_flag": "Y",
+    "borrower": "Riley Cooper",
+    "co_borrower": null,
+    "as_of_date": "2026-02-16"
+  },
+  {
+    "account_number": "100005",
+    "settlement_flag": "Y",
+    "borrower": "Avery Patel",
+    "co_borrower": "Sam Patel",
+    "as_of_date": "2026-02-17"
+  },
+  {
+    "account_number": "100006",
+    "settlement_flag": "N",
+    "borrower": "Cameron Brooks",
+    "co_borrower": null,
+    "as_of_date": "2026-02-17"
+  },
+  {
+    "account_number": "100007",
+    "settlement_flag": "Y",
+    "borrower": "Jordan Nguyen",
+    "co_borrower": "Taylor Nguyen",
+    "as_of_date": "2026-02-18"
+  },
+  {
+    "account_number": "100008",
+    "settlement_flag": "N",
+    "borrower": "Dakota Perez",
+    "co_borrower": "Alex Perez",
+    "as_of_date": "2026-02-18"
+  },
+  {
+    "account_number": "100009",
+    "settlement_flag": "Y",
+    "borrower": "Quinn Davis",
+    "co_borrower": null,
+    "as_of_date": "2026-02-19"
+  },
+  {
+    "account_number": "100010",
+    "settlement_flag": "N",
+    "borrower": "Hayden Flores",
+    "co_borrower": "Morgan Flores",
+    "as_of_date": "2026-02-20"
+  },
+  {
+    "account_number": "100011",
+    "settlement_flag": "Y",
+    "borrower": "Parker Reed",
+    "co_borrower": "Jamie Reed",
+    "as_of_date": "2026-02-21"
+  },
+  {
+    "account_number": "100012",
+    "settlement_flag": "N",
+    "borrower": "Skyler Bennett",
+    "co_borrower": null,
+    "as_of_date": "2026-02-22"
+  },
+  {
+    "account_number": "100013",
+    "settlement_flag": "N",
+    "borrower": "Logan Hughes",
+    "co_borrower": "Peyton Hughes",
+    "as_of_date": "2026-02-22"
+  },
+  {
+    "account_number": "100014",
+    "settlement_flag": "Y",
+    "borrower": "Blair Stone",
+    "co_borrower": null,
+    "as_of_date": "2026-02-23"
+  },
+  {
+    "account_number": "100015",
+    "settlement_flag": "N",
+    "borrower": "Emerson Ward",
+    "co_borrower": "Drew Ward",
+    "as_of_date": "2026-02-24"
+  },
+  {
+    "account_number": "100016",
+    "settlement_flag": "N",
+    "borrower": "Rowan Kelly",
+    "co_borrower": null,
+    "as_of_date": "2026-02-24"
+  }
+]

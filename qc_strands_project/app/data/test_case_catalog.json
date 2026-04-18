@@ -1,0 +1,87 @@
+{
+  "100001": {
+    "scenario": "happy_path_settled",
+    "description": "Population says Y, SIF tags exist, and AR log has direct settled-in-full rows.",
+    "purpose": "Baseline clean settled case for end-to-end validation."
+  },
+  "100002": {
+    "scenario": "happy_path_not_settled",
+    "description": "Population says N, no SIF tags exist, and AR log has no settlement evidence.",
+    "purpose": "Baseline clean non-settled case."
+  },
+  "100003": {
+    "scenario": "contradictory_sources",
+    "description": "Population says N, but a SIF tag exists and AR log language implies resolution.",
+    "purpose": "Test mismatch detection across population, tags, and comments."
+  },
+  "100004": {
+    "scenario": "fallback_comment_supports_settlement",
+    "description": "No direct settled-in-full phrase is present, but the latest comment strongly implies settlement.",
+    "purpose": "Test fallback AR log logic when comments carry the evidence."
+  },
+  "100005": {
+    "scenario": "ambiguous_free_text",
+    "description": "Population says Y and SIF tags exist, but AR log comments remain ambiguous.",
+    "purpose": "Test whether later reasoning can avoid overconfident interpretation."
+  },
+  "100006": {
+    "scenario": "historical_latest_overrides_older",
+    "description": "Older AR log comment sounds stronger, but the latest comment is weaker and should drive fallback review.",
+    "purpose": "Test handling of multiple historical comments."
+  },
+  "100007": {
+    "scenario": "population_only_settled_flag",
+    "description": "Population says Y, but there are no SIF tags and no strong AR log evidence.",
+    "purpose": "Test contradiction where downstream evidence is missing."
+  },
+  "100008": {
+    "scenario": "population_n_comment_implies_settlement",
+    "description": "Population says N, but the latest AR log comment strongly implies settlement.",
+    "purpose": "Test contradictions between population status and fallback comment evidence."
+  },
+  "100009": {
+    "scenario": "multiple_historical_positive_records",
+    "description": "Multiple SIF tag dates exist and AR log later contains direct settled-in-full evidence.",
+    "purpose": "Test multi-row positive history across sources."
+  },
+  "100010": {
+    "scenario": "incomplete_downstream_rows",
+    "description": "A SIF tag row is missing tag_date and one AR log row has a null message.",
+    "purpose": "Test defensive handling of incomplete data fields."
+  },
+  "100011": {
+    "scenario": "missing_tag_date_sparse_evidence",
+    "description": "Population says Y, SIF tag row exists without a date, and AR log comment is weak.",
+    "purpose": "Test partial tag data without direct AR evidence."
+  },
+  "100012": {
+    "scenario": "no_downstream_records",
+    "description": "Population account exists but has no matching tag or AR log rows.",
+    "purpose": "Test sparse downstream evidence handling."
+  },
+  "100013": {
+    "scenario": "unsupported_noise_only",
+    "description": "Only unrelated tags and unrelated AR log messages exist.",
+    "purpose": "Test that tools stay focused on QC-relevant evidence."
+  },
+  "100014": {
+    "scenario": "ambiguous_fallback_with_history",
+    "description": "Historical comments reference settlement review, but the latest comment is only pending archive.",
+    "purpose": "Test ambiguity and latest-comment weighting in fallback logic."
+  },
+  "100015": {
+    "scenario": "customer_implied_future_state",
+    "description": "AR log comment says the balance should be zero soon, but no direct evidence exists.",
+    "purpose": "Test ambiguous customer-reported language."
+  },
+  "100016": {
+    "scenario": "direct_log_contradiction",
+    "description": "Population says N and there is no SIF tag, but AR log contains direct settled-in-full evidence.",
+    "purpose": "Test strong contradiction driven by direct AR log evidence."
+  },
+  "199001": {
+    "scenario": "downstream_noise_not_in_population",
+    "description": "Tags and AR logs exist for an account that is not present in the population batch.",
+    "purpose": "Test filtering focus and ignore extraneous downstream rows."
+  }
+}

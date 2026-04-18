@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -9,6 +10,8 @@ from dotenv import load_dotenv
 
 from app.config import PROJECT_ROOT
 from app.models.phase2_local_model import PhaseTwoDeterministicModel
+
+logger = logging.getLogger("qc_strands.models.factory")
 
 
 def build_default_agent_model(role: str) -> Any:
@@ -25,13 +28,15 @@ def build_default_agent_model(role: str) -> Any:
     if api_key and model_name:
         from strands.models.gemini import GeminiModel
 
+        logger.info("selected_model role=%s provider=gemini model=%s", role, model_name)
         return GeminiModel(
             client_args={"api_key": api_key},
             model_id=model_name,
             params={
                 "temperature": 0.0,
-                "max_output_tokens": 2048,
+                "max_output_tokens": 32768,
             },
         )
 
+    logger.info("selected_model role=%s provider=local model=PhaseTwoDeterministicModel", role)
     return PhaseTwoDeterministicModel(role)

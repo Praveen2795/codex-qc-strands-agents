@@ -69,6 +69,110 @@ def _parse_json_text(payload: str) -> dict[str, Any]:
         return {}
 
 
+def _step_decision_deterministic(request: dict[str, Any]) -> dict[str, Any]:
+    """Apply settlement QC step-level rules deterministically (phase-1 / local model).
+
+    Mirrors the logic in qc_decision_agent._apply_step_decision_rules without
+    importing from that module to avoid circular dependencies via factory.py.
+    """
+    account_ctx = request.get("account_context", {})
+    account_number = account_ctx.get("account_number", "unknown")
+    settlement_flag = str(account_ctx.get("settlement_flag", "")).upper()
+
+    evidence_bundle = request.get("evidence_bundle", {})
+    step_id = request.get("step_id", "")
+    rules = request.get("evaluation_rules", [])
+    rule_ids = [r["rule_id"] for r in rules if "rule_id" in r]
+
+    evidence_items: list[dict[str, Any]] = evidence_bundle.get("evidence", [])
+    tag_check = next((e for e in evidence_items if e.get("check") == "account_tag_sif_presence"), {})
+    arlog_check = next((e for e in evidence_items if e.get("check") == "arlog_settlement_evidence"), {})
+
+    sif_present: bool = bool(tag_check.get("sif_present", False))
+    settled_in_full_found: bool = bool(arlog_check.get("settled_in_full_found", False))
+    latest_comment: str = arlog_check.get("latest_comment_message") or ""
+    comment_implies: bool = any(
+        phrase in latest_comment.lower()
+        for phrase in ("settled", "settlement", "paid in full", "resolved")
+    )
+
+    used_checks: list[str] = []
+    if tag_check:
+        used_checks.append("account_tag_sif_presence")
+    if arlog_check:
+        used_checks.append("arlog_settlement_evidence")
+
+    if settlement_flag == "Y":
+        rule1_outcome = "pass" if sif_present else "manual_review"
+        rule23_outcome = "pass" if (settled_in_full_found or comment_implies) else "insufficient_evidence"
+    elif settlement_flag == "N":
+        rule1_outcome = "fail" if sif_present else "pass"
+        rule23_outcome = "fail" if (settled_in_full_found or comment_implies) else "pass"
+    else:
+        rule1_outcome = "manual_review"
+        rule23_outcome = "manual_review"
+
+    sub_outcomes = [rule1_outcome, rule23_outcome]
+    if "fail" in sub_outcomes:
+        decision = "fail"
+        reason = f"One or more settlement rules failed. settlement_flag={settlement_flag}; sif_present={sif_present}; settled_in_full_found={settled_in_full_found}."
+    elif "insufficient_evidence" in sub_outcomes:
+        decision = "insufficient_evidence"
+        reason = f"Insufficient evidence to confirm settlement. settlement_flag={settlement_flag}; sif_present={sif_present}; settled_in_full_found={settled_in_full_found}."
+    elif "manual_review" in sub_outcomes:
+        decision = "manual_review"
+        reason = f"Ambiguous evidence requires manual review. settlement_flag={settlement_flag}; sif_present={sif_present}; settled_in_full_found={settled_in_full_found}."
+    else:
+        decision = "pass"
+        reason = f"All applicable settlement rules passed. settlement_flag={settlement_flag}; sif_present={sif_present}; settled_in_full_found={settled_in_full_found}."
+
+    return {
+        "decision_scope": "step_level",
+        "step_id": step_id,
+        "account_number": account_number,
+        "decision": decision,
+        "reason": reason,
+        "used_rule_ids": rule_ids,
+        "used_evidence_checks": used_checks,
+    }
+
+
+def _final_decision_deterministic(request: dict[str, Any]) -> dict[str, Any]:
+    """Aggregate step-level decisions into a final verdict deterministically (phase-1 / local model)."""
+    account_ctx = request.get("account_context", {})
+    account_number = account_ctx.get("account_number", "unknown")
+    step_decisions: list[dict[str, Any]] = request.get("step_decisions", [])
+    final_step_id = request.get("final_step_id", "")
+    rules = request.get("evaluation_rules", [])
+    rule_ids = [r["rule_id"] for r in rules if "rule_id" in r]
+
+    used_step_ids = [sd.get("step_id") for sd in step_decisions if sd.get("step_id")]
+    step_outcomes = [sd.get("decision") for sd in step_decisions]
+
+    if "fail" in step_outcomes:
+        final_decision = "fail"
+        reason = "One or more required step-level decisions returned fail."
+    elif any(o in ("insufficient_evidence", None) for o in step_outcomes):
+        final_decision = "manual_review"
+        reason = "One or more required step-level decisions returned insufficient evidence or are missing."
+    elif "manual_review" in step_outcomes:
+        final_decision = "manual_review"
+        reason = "One or more required step-level decisions require manual review."
+    else:
+        final_decision = "pass"
+        reason = "All required step-level decisions passed."
+
+    return {
+        "decision_scope": "final_level",
+        "final_step_id": final_step_id,
+        "account_number": account_number,
+        "decision": final_decision,
+        "reason": reason,
+        "used_rule_ids": rule_ids,
+        "used_step_decisions": used_step_ids,
+    }
+
+
 class PhaseTwoDeterministicModel(Model):
     """Deterministic local model used for the Phase 2 prototype."""
 
@@ -114,6 +218,11 @@ class PhaseTwoDeterministicModel(Model):
 
         if self.role == "qc_validation":
             async for event in self._stream_qc_validation(messages):
+                yield event
+            return
+
+        if self.role == "qc_decision":
+            async for event in self._stream_qc_decision(messages):
                 yield event
             return
 
@@ -165,23 +274,54 @@ class PhaseTwoDeterministicModel(Model):
         async for event in self._emit_text(json.dumps(final_payload)):
             yield event
 
+    async def _stream_qc_decision(self, messages: Messages) -> AsyncIterable[StreamEvent]:
+        """Deterministic decision model: apply settlement QC rules and emit result JSON."""
+        request = _parse_json_text(_latest_user_text(messages))
+        mode = request.get("decision_mode")
+
+        if mode == "step_decision":
+            result = _step_decision_deterministic(request)
+        elif mode == "final_decision":
+            result = _final_decision_deterministic(request)
+        else:
+            result = {"error": f"unknown_decision_mode: {mode}"}
+
+        async for event in self._emit_text(json.dumps(result)):
+            yield event
+
     async def _stream_orchestrator(self, messages: Messages) -> AsyncIterable[StreamEvent]:
         request = _parse_json_text(_latest_user_text(messages))
         procedure_document = request.get("procedure_document", {})
-        steps = procedure_document.get("steps", [])
+
+        # Navigate the new procedure structure
+        pop_steps: list[dict[str, Any]] = procedure_document.get("population_phase", {}).get("steps", [])
+        acct_steps: list[dict[str, Any]] = procedure_document.get("account_phase", {}).get("steps", [])
+        evaluation_rules: list[dict[str, Any]] = procedure_document.get("evaluation_rules", [])
+
+        # Convenience: fetch checkpoint_scope from procedure or request (runtime override)
+        checkpoint_scope: dict[str, Any] = (
+            request.get("checkpoint_scope")
+            or procedure_document.get("checkpoint_scope", {})
+        )
+        batch_size: int = checkpoint_scope.get("batch_size", 2)
+
         tool_results = _paired_tool_results(messages)
 
-        if not tool_results and steps:
-            first_step = steps[0]
+        def _rules_for_ids(rule_ids: list[str]) -> list[dict[str, Any]]:
+            return [r for r in evaluation_rules if r.get("rule_id") in rule_ids]
+
+        # ── Pop-1: fetch population batch ─────────────────────────────────────
+        if not tool_results and pop_steps:
+            pop_step = pop_steps[0]
             fetch_request = {
-                "step_id": first_step["step_id"],
-                "step_title": first_step["title"],
+                "step_id": pop_step["step_id"],
+                "step_title": pop_step["title"],
                 "requested_tools": ["get_population_batch"],
                 "expected_output_type": "population_batch",
                 "start_date": request.get("start_date", "2026-02-01"),
                 "end_date": request.get("end_date", "2026-02-28"),
                 "cursor": 0,
-                "batch_size": 2,
+                "batch_size": batch_size,
             }
             async for event in self._emit_tool_use(
                 tool_name="fetch_structured_qc_data",
@@ -190,16 +330,17 @@ class PhaseTwoDeterministicModel(Model):
                 yield event
             return
 
-        if len(tool_results) == 1 and len(steps) > 1:
+        # ── Acct-1: collect evidence for the first account ────────────────────
+        if len(tool_results) == 1 and acct_steps:
             population_result = _parse_json_text(tool_results[0]["text"])
             accounts = population_result.get("accounts", [])
             selected_account = accounts[0]["account_number"] if accounts else None
-            validation_step = steps[1]
+            evidence_step = acct_steps[0]
             validation_request = {
-                "step_id": validation_step["step_id"],
-                "step_title": validation_step["title"],
+                "step_id": evidence_step["step_id"],
+                "step_title": evidence_step["title"],
                 "account_number": selected_account,
-                "requested_tools": validation_step.get("evidence_tools", []),
+                "requested_tools": evidence_step.get("evidence_tools", []),
                 "expected_output_type": "evidence_bundle",
             }
             async for event in self._emit_tool_use(
@@ -209,50 +350,168 @@ class PhaseTwoDeterministicModel(Model):
                 yield event
             return
 
+        # ── Acct-2: step-level decision ───────────────────────────────────────
+        if len(tool_results) == 2 and len(acct_steps) > 1:
+            population_result = _parse_json_text(tool_results[0]["text"])
+            evidence_result = _parse_json_text(tool_results[1]["text"])
+            accounts = population_result.get("accounts", [])
+            account_data = accounts[0] if accounts else {}
+            decision_step = acct_steps[1]
+            step_decision_request = {
+                "decision_mode": "step_decision",
+                "step_id": decision_step["step_id"],
+                "step_title": decision_step["title"],
+                "account_context": {
+                    "account_number": account_data.get("account_number"),
+                    "settlement_flag": account_data.get("settlement_flag"),
+                    "borrower": account_data.get("borrower"),
+                },
+                "evidence_bundle": evidence_result,
+                "evaluation_rules": _rules_for_ids(decision_step.get("evaluation_rule_ids", [])),
+            }
+            async for event in self._emit_tool_use(
+                tool_name="make_qc_decision",
+                tool_input={"input": json.dumps(step_decision_request)},
+            ):
+                yield event
+            return
+
+        # ── Acct-3: final account-level decision ──────────────────────────────
+        if len(tool_results) == 3 and len(acct_steps) > 2:
+            population_result = _parse_json_text(tool_results[0]["text"])
+            step_decision_result = _parse_json_text(tool_results[2]["text"])
+            accounts = population_result.get("accounts", [])
+            account_data = accounts[0] if accounts else {}
+            final_step = acct_steps[2]
+            final_decision_request = {
+                "decision_mode": "final_decision",
+                "final_step_id": final_step["step_id"],
+                "account_context": {
+                    "account_number": account_data.get("account_number"),
+                    "settlement_flag": account_data.get("settlement_flag"),
+                },
+                "step_decisions": [step_decision_result],
+                "evaluation_rules": _rules_for_ids(final_step.get("evaluation_rule_ids", [])),
+            }
+            async for event in self._emit_tool_use(
+                tool_name="make_qc_decision",
+                tool_input={"input": json.dumps(final_decision_request)},
+            ):
+                yield event
+            return
+
+        # ── All steps done: build final output ────────────────────────────────
         population_result = _parse_json_text(tool_results[0]["text"]) if tool_results else {}
-        validation_result = _parse_json_text(tool_results[1]["text"]) if len(tool_results) > 1 else {}
-        current_account = validation_result.get("account_number")
+        evidence_result = _parse_json_text(tool_results[1]["text"]) if len(tool_results) > 1 else {}
+        step_decision_result = _parse_json_text(tool_results[2]["text"]) if len(tool_results) > 2 else {}
+        final_decision_result = _parse_json_text(tool_results[3]["text"]) if len(tool_results) > 3 else {}
+        current_account = evidence_result.get("account_number")
+
         interpreted_steps = []
-        if steps:
-            interpreted_steps.append(
-                {
-                    "step_id": steps[0]["step_id"],
-                    "title": steps[0]["title"],
-                    "preferred_agent": steps[0]["preferred_agent"],
-                    "chosen_action": "call_data_fetcher_agent",
-                }
-            )
-        if len(steps) > 1:
-            interpreted_steps.append(
-                {
-                    "step_id": steps[1]["step_id"],
-                    "title": steps[1]["title"],
-                    "preferred_agent": steps[1]["preferred_agent"],
-                    "chosen_action": "call_qc_validation_agent",
-                }
-            )
+        if pop_steps:
+            pop_step = pop_steps[0]
+            interpreted_steps.append({
+                "step_id": pop_step["step_id"],
+                "phase": "population_phase",
+                "title": pop_step["title"],
+                "preferred_agent": pop_step["preferred_agent"],
+                "chosen_action": "fetch_structured_qc_data",
+                "agent_request": {
+                    "step_id": pop_step["step_id"],
+                    "step_title": pop_step["title"],
+                    "requested_tools": ["get_population_batch"],
+                    "expected_output_type": "population_batch",
+                    "start_date": request.get("start_date", "2026-02-01"),
+                    "end_date": request.get("end_date", "2026-02-28"),
+                    "cursor": 0,
+                    "batch_size": batch_size,
+                },
+            })
+        if len(acct_steps) > 0:
+            evidence_step = acct_steps[0]
+            interpreted_steps.append({
+                "step_id": evidence_step["step_id"],
+                "phase": "account_phase",
+                "title": evidence_step["title"],
+                "preferred_agent": evidence_step["preferred_agent"],
+                "chosen_action": "collect_qc_evidence",
+                "agent_request": {
+                    "step_id": evidence_step["step_id"],
+                    "step_title": evidence_step["title"],
+                    "account_number": current_account,
+                    "requested_tools": evidence_step.get("evidence_tools", []),
+                    "expected_output_type": "evidence_bundle",
+                },
+            })
+        if len(acct_steps) > 1:
+            decision_step = acct_steps[1]
+            interpreted_steps.append({
+                "step_id": decision_step["step_id"],
+                "phase": "account_phase",
+                "title": decision_step["title"],
+                "preferred_agent": decision_step["preferred_agent"],
+                "chosen_action": "make_qc_decision",
+                "agent_request": {
+                    "decision_mode": "step_decision",
+                    "step_id": decision_step["step_id"],
+                    "evaluation_rule_ids": decision_step.get("evaluation_rule_ids", []),
+                },
+            })
+        if len(acct_steps) > 2:
+            final_step = acct_steps[2]
+            interpreted_steps.append({
+                "step_id": final_step["step_id"],
+                "phase": "account_phase",
+                "title": final_step["title"],
+                "preferred_agent": final_step["preferred_agent"],
+                "chosen_action": "make_qc_decision",
+                "agent_request": {
+                    "decision_mode": "final_decision",
+                    "final_step_id": final_step["step_id"],
+                    "evaluation_rule_ids": final_step.get("evaluation_rule_ids", []),
+                },
+            })
+
+        outputs = []
+        if pop_steps:
+            outputs.append({
+                "step_id": pop_steps[0]["step_id"],
+                "phase": "population_phase",
+                "agent_called": "fetch_structured_qc_data",
+                "agent_output": population_result,
+            })
+        if len(acct_steps) > 0:
+            outputs.append({
+                "step_id": acct_steps[0]["step_id"],
+                "phase": "account_phase",
+                "agent_called": "collect_qc_evidence",
+                "agent_output": evidence_result,
+            })
+        if len(acct_steps) > 1:
+            outputs.append({
+                "step_id": acct_steps[1]["step_id"],
+                "phase": "account_phase",
+                "agent_called": "make_qc_decision",
+                "agent_output": step_decision_result,
+            })
+        if len(acct_steps) > 2:
+            outputs.append({
+                "step_id": acct_steps[2]["step_id"],
+                "phase": "account_phase",
+                "agent_called": "make_qc_decision",
+                "agent_output": final_decision_result,
+            })
 
         final_payload = {
             "task_request": request.get("task_request"),
-            "procedure_document": procedure_document,
-            "interpreted_steps": interpreted_steps,
+            "procedure_name": request.get("procedure_name"),
+            "batch_id": request.get("batch_id"),
             "current_account": current_account,
-            "outputs": [
-                {
-                    "step_id": steps[0]["step_id"],
-                    "action": "call_data_fetcher_agent",
-                    "agent_called": "data_fetcher_agent",
-                    "selected_account": current_account,
-                    "result": population_result,
-                },
-                {
-                    "step_id": steps[1]["step_id"],
-                    "action": "call_qc_validation_agent",
-                    "agent_called": "qc_validation_agent",
-                    "selected_account": current_account,
-                    "result": validation_result,
-                },
-            ],
+            "interpreted_steps": interpreted_steps,
+            "outputs": outputs,
+            "step_decision": step_decision_result,
+            "final_decision": final_decision_result,
+            "status": "completed",
         }
         async for event in self._emit_text(json.dumps(final_payload)):
             yield event
