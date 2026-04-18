@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import textwrap
 from typing import Any
 
@@ -17,9 +18,12 @@ from app.agents.data_fetcher_agent import build_data_fetcher_agent
 from app.agents.orchestrator_agent import (
     build_orchestrator_agent,
 )
-from app.agents.qc_decision_agent import build_qc_decision_agent
+from app.agents.qc_decision_agent import build_qc_decision_agent, run_qc_decision_agent_wrapper
 from app.agents.qc_validation_agent import build_qc_validation_agent
 from app.logging_utils import setup_project_logging
+from app.tools.arlog_tools import get_arlog_settlement_evidence
+from app.tools.population_tools import get_population_batch
+from app.tools.tag_tools import get_account_tag_sif_presence
 
 logger = logging.getLogger("qc_strands.main")
 
@@ -367,12 +371,186 @@ def print_flow_trace(result: dict) -> None:
     print(_hr())
 
 
+# ── Local sequential demo (no orchestrator) ──────────────────────────────────
+
+def run_local_sequential_demo() -> dict:
+    """Verify the 6-step QC flow by directly chaining tools and decision wrapper.
+
+    Bypasses the LLM orchestrator entirely. Each step is called explicitly:
+      pop-1   → get_population_batch                (data tool, direct)
+      acct-1a → get_account_tag_sif_presence        (evidence tool, direct)
+      acct-1b → run_qc_decision_agent_wrapper       (rule_sif_tag only)
+      acct-2a → get_arlog_settlement_evidence       (evidence tool, direct)
+      acct-2b → run_qc_decision_agent_wrapper       (rule_arlog_direct + conditional rule_arlog_comment)
+      acct-3  → run_qc_decision_agent_wrapper       (final aggregation)
+    """
+    run_log_path = setup_project_logging("local_sequential_demo")
+    logger.info("local_sequential_demo_started")
+
+    sample_procedure = load_schema_json("sample_procedure.json")
+    evaluation_rules = sample_procedure.get("evaluation_rules", [])
+    rules_by_id = {r["rule_id"]: r for r in evaluation_rules}
+
+    def _rules(ids: list[str]) -> list[dict]:
+        return [rules_by_id[i] for i in ids if i in rules_by_id]
+
+    _section("LOCAL SEQUENTIAL DEMO — DIRECT TOOL CHAIN (NO ORCHESTRATOR)")
+    print(f"  procedure : {_c(sample_procedure['procedure_name'], _BOLD)}")
+    print(f"  mode      : {_c('deterministic tools · rule-subset-aware decisions', _DIM)}")
+    print()
+    print(_c("  Step trace:", _DIM))
+    print(_hr())
+
+    # ── pop-1: fetch population batch ─────────────────────────────────────────
+    print(f"  {_c('[pop-1   ]', _BLUE, _BOLD)}  get_population_batch")
+    pop_result = get_population_batch(
+        start_date="2026-02-01",
+        end_date="2026-02-28",
+        cursor=0,
+        batch_size=2,
+    )
+    accounts = pop_result.get("accounts", [])
+    account_data = accounts[0] if accounts else {}
+    account_number = str(account_data.get("account_number", "?"))
+    settlement_flag = str(account_data.get("settlement_flag", "?"))
+    account_context = {"account_number": account_number, "settlement_flag": settlement_flag}
+    logger.info("pop1_complete accounts=%d first=%s flag=%s", len(accounts), account_number, settlement_flag)
+
+    # ── acct-1a: SIF tag evidence ─────────────────────────────────────────────
+    print(f"  {_c('[acct-1a ]', _MAGENTA, _BOLD)}  get_account_tag_sif_presence  acct={account_number}")
+    tag_evidence = get_account_tag_sif_presence(account_number=account_number)
+    tag_bundle = {
+        "account_number": account_number,
+        "evidence_count": 1,
+        "evidence_checks": [tag_evidence.get("check")],
+        "evidence": [tag_evidence],
+    }
+    logger.info("acct_1a_complete sif_present=%s", tag_evidence.get("sif_present"))
+
+    # ── acct-1b: tag step decision — rule_sif_tag only ────────────────────────
+    print(f"  {_c('[acct-1b ]', _YELLOW, _BOLD)}  step_decision  rule_sif_tag only")
+    tag_decision = run_qc_decision_agent_wrapper({
+        "decision_mode": "step_decision",
+        "step_id": "acct-1b",
+        "step_title": "Evaluate SIF tag evidence",
+        "account_context": account_context,
+        "evidence_bundle": tag_bundle,
+        "evaluation_rules": _rules(["rule_sif_tag"]),
+    })
+    dec_1b = tag_decision.get("decision", "?")
+    print(f"  {_c('[acct-1b ]', _YELLOW, _BOLD)}  → {_c(dec_1b.upper(), _decision_colour(dec_1b), _BOLD)}")
+    logger.info("acct_1b_complete decision=%s rules=%s", dec_1b, tag_decision.get("used_rule_ids"))
+
+    # ── acct-2a: AR log evidence ──────────────────────────────────────────────
+    print(f"  {_c('[acct-2a ]', _MAGENTA, _BOLD)}  get_arlog_settlement_evidence  acct={account_number}")
+    arlog_evidence = get_arlog_settlement_evidence(account_number=account_number)
+    arlog_bundle = {
+        "account_number": account_number,
+        "evidence_count": 1,
+        "evidence_checks": [arlog_evidence.get("check")],
+        "evidence": [arlog_evidence],
+    }
+    logger.info(
+        "acct_2a_complete settled_in_full_found=%s comment_check_performed=%s",
+        arlog_evidence.get("settled_in_full_found"),
+        arlog_evidence.get("comment_check_performed"),
+    )
+
+    # ── acct-2b: AR log step decision — rule_arlog_direct + conditional rule_arlog_comment
+    print(f"  {_c('[acct-2b ]', _YELLOW, _BOLD)}  step_decision  rule_arlog_direct + conditional rule_arlog_comment")
+    arlog_decision = run_qc_decision_agent_wrapper({
+        "decision_mode": "step_decision",
+        "step_id": "acct-2b",
+        "step_title": "Evaluate AR log settlement evidence",
+        "account_context": account_context,
+        "evidence_bundle": arlog_bundle,
+        "evaluation_rules": _rules(["rule_arlog_direct", "rule_arlog_comment"]),
+    })
+    dec_2b = arlog_decision.get("decision", "?")
+    print(f"  {_c('[acct-2b ]', _YELLOW, _BOLD)}  → {_c(dec_2b.upper(), _decision_colour(dec_2b), _BOLD)}")
+    logger.info("acct_2b_complete decision=%s rules=%s", dec_2b, arlog_decision.get("used_rule_ids"))
+
+    # ── acct-3: final decision ────────────────────────────────────────────────
+    print(f"  {_c('[acct-3  ]', _YELLOW, _BOLD)}  final_decision  rule_final_aggregation")
+    final_decision = run_qc_decision_agent_wrapper({
+        "decision_mode": "final_decision",
+        "final_step_id": "acct-3",
+        "account_context": account_context,
+        "step_decisions": [tag_decision, arlog_decision],
+        "evaluation_rules": _rules(["rule_final_aggregation"]),
+    })
+    dec_3 = final_decision.get("decision", "?")
+    print(f"  {_c('[acct-3  ]', _YELLOW, _BOLD)}  → {_c(dec_3.upper(), _decision_colour(dec_3), _BOLD)}")
+    logger.info("acct_3_complete final_decision=%s", dec_3)
+
+    # ── Print results ─────────────────────────────────────────────────────────
+    _section("LOCAL SEQUENTIAL DEMO — RESULTS")
+    _field("account", f"{account_number}  flag={settlement_flag}  borrower={account_data.get('borrower', '?')}")
+
+    _subsection("acct-1a  ·  SIF tag evidence")
+    sif = tag_evidence.get("sif_present", False)
+    _field("sif_present",            _c(str(sif), _GREEN if sif else _RED, _BOLD))
+    _field("matching_sif_rows_count", tag_evidence.get("matching_sif_rows_count", 0))
+
+    _subsection("acct-1b  ·  tag step decision  (rule_sif_tag only)")
+    print(f"    {_c('DECISION:', _BOLD)}  {_c(dec_1b.upper(), _decision_colour(dec_1b), _BOLD)}")
+    _field("reason",        tag_decision.get("reason", ""))
+    _field("used_rule_ids", tag_decision.get("used_rule_ids", []))
+
+    _subsection("acct-2a  ·  AR log evidence")
+    found = arlog_evidence.get("settled_in_full_found", False)
+    _field("settled_in_full_found",   _c(str(found), _GREEN if found else _DIM, _BOLD))
+    _field("matching_rows_count",     arlog_evidence.get("matching_settled_in_full_rows_count", 0))
+    _field("comment_check_performed", arlog_evidence.get("comment_check_performed", False))
+
+    _subsection("acct-2b  ·  AR log step decision  (rule_arlog_direct + conditional rule_arlog_comment)")
+    print(f"    {_c('DECISION:', _BOLD)}  {_c(dec_2b.upper(), _decision_colour(dec_2b), _BOLD)}")
+    _field("reason",        arlog_decision.get("reason", ""))
+    _field("used_rule_ids", arlog_decision.get("used_rule_ids", []))
+    skipped_note = "rule_arlog_comment skipped — direct AR evidence present" if found else "(no rules skipped)"
+    _field("fallback_status", _c(skipped_note, _DIM))
+
+    _subsection("acct-3  ·  final verdict  (rule_final_aggregation)")
+    print(f"    {_c('FINAL VERDICT:', _BOLD)}  {_c(dec_3.upper(), _decision_colour(dec_3), _BOLD)}")
+    _field("reason",            final_decision.get("reason", ""))
+    _field("step_decisions_in", [tag_decision.get("step_id"), arlog_decision.get("step_id")])
+
+    print()
+    print(_hr())
+    print(f"  log file  → {_c(str(run_log_path), _DIM)}")
+    print()
+
+    logger.info(
+        "local_sequential_demo_completed account=%s tag_dec=%s arlog_dec=%s final_dec=%s",
+        account_number, dec_1b, dec_2b, dec_3,
+    )
+    return {
+        "demo_type": "local_sequential",
+        "account": account_data,
+        "tag_evidence": tag_evidence,
+        "tag_decision": tag_decision,
+        "arlog_evidence": arlog_evidence,
+        "arlog_decision": arlog_decision,
+        "final_decision": final_decision,
+        "log_file": str(run_log_path),
+    }
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    """Run the reusable QC skeleton demonstration with live tracing."""
-    result = demo_workflow()
-    print_flow_trace(result)
+    """Run either the orchestrated QC demo or the local sequential demo.
+
+    Usage:
+      python -m app.main            # orchestrated (LLM orchestrator, default)
+      python -m app.main local      # local sequential (direct tool chain, no orchestrator)
+    """
+    mode = sys.argv[1] if len(sys.argv) > 1 else "orchestrated"
+    if mode == "local":
+        run_local_sequential_demo()
+    else:
+        result = demo_workflow()
+        print_flow_trace(result)
 
 
 if __name__ == "__main__":

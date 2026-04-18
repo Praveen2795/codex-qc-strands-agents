@@ -46,14 +46,13 @@
     "iteration": "per_account",
     "steps": [
       {
-        "step_id": "acct-1",
+        "step_id": "acct-1a",
         "step_type": "evidence_collection",
-        "title": "Collect settlement evidence",
-        "objective": "Gather account-level evidence for all settlement-related checks. Run all listed evidence tools for the account.",
+        "title": "Collect SIF tag evidence",
+        "objective": "Gather SIF account tag evidence for the account.",
         "preferred_agent": "qc_validation_agent",
         "evidence_tools": [
-          "get_account_tag_sif_presence",
-          "get_arlog_settlement_evidence"
+          "get_account_tag_sif_presence"
         ],
         "depends_on": ["pop-1"],
         "evaluation_rule_ids": [],
@@ -61,28 +60,53 @@
         "checkpoint_note": "In checkpoint scope, run for the first account only."
       },
       {
-        "step_id": "acct-2",
+        "step_id": "acct-1b",
         "step_type": "step_decision",
-        "title": "Evaluate settlement evidence",
-        "objective": "Apply the settlement evaluation rules to the collected evidence. Return a structured step-level decision: pass, fail, insufficient_evidence, or manual_review.",
+        "title": "Evaluate SIF tag evidence",
+        "objective": "Apply rule_sif_tag to the tag evidence collected in acct-1a. Return a step-level decision.",
         "preferred_agent": "qc_decision_agent",
         "evidence_tools": [],
-        "depends_on": ["pop-1", "acct-1"],
-        "evaluation_rule_ids": ["rule_sif_tag", "rule_arlog_direct", "rule_arlog_comment"],
+        "depends_on": ["pop-1", "acct-1a"],
+        "evaluation_rule_ids": ["rule_sif_tag"],
         "decision_policy": "any_fail_fails",
-        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-1, and the rule subset for evaluation_rule_ids listed here."
+        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-1a, and the rule subset for evaluation_rule_ids (rule_sif_tag only)."
+      },
+      {
+        "step_id": "acct-2a",
+        "step_type": "evidence_collection",
+        "title": "Collect AR log settlement evidence",
+        "objective": "Gather AR log evidence for the account.",
+        "preferred_agent": "qc_validation_agent",
+        "evidence_tools": [
+          "get_arlog_settlement_evidence"
+        ],
+        "depends_on": ["pop-1"],
+        "evaluation_rule_ids": [],
+        "decision_policy": null
+      },
+      {
+        "step_id": "acct-2b",
+        "step_type": "step_decision",
+        "title": "Evaluate AR log settlement evidence",
+        "objective": "Apply rule_arlog_direct and conditional rule_arlog_comment to the AR log evidence.",
+        "preferred_agent": "qc_decision_agent",
+        "evidence_tools": [],
+        "depends_on": ["pop-1", "acct-2a"],
+        "evaluation_rule_ids": ["rule_arlog_direct", "rule_arlog_comment"],
+        "decision_policy": "any_fail_fails",
+        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-2a, and the rule subset (rule_arlog_direct + rule_arlog_comment). Note rule_arlog_comment is conditional_fallback — skip if settled_in_full_found is true."
       },
       {
         "step_id": "acct-3",
         "step_type": "final_decision",
         "title": "Final account QC verdict",
-        "objective": "Aggregate all step-level decisions for this account into one final QC verdict: pass, fail, or manual_review.",
+        "objective": "Aggregate step decisions from acct-1b and acct-2b into one final QC verdict.",
         "preferred_agent": "qc_decision_agent",
         "evidence_tools": [],
-        "depends_on": ["acct-2"],
+        "depends_on": ["acct-1b", "acct-2b"],
         "evaluation_rule_ids": ["rule_final_aggregation"],
         "decision_policy": "any_fail_fails_any_insufficient_manual_review",
-        "orchestration_hint": "Call make_qc_decision with decision_mode=final_decision. Pass account_context, the list of completed step_decisions (acct-2), and the rule subset for evaluation_rule_ids listed here."
+        "orchestration_hint": "Call make_qc_decision with decision_mode=final_decision. Pass account_context, step_decisions=[acct-1b result, acct-2b result], and evaluation_rules for rule_final_aggregation."
       }
     ]
   },
@@ -93,7 +117,7 @@
       "title": "SIF tag alignment",
       "description": "The account tag SIF presence must align with settlement_flag. If settlement_flag=Y, sif_present must be true to pass. If settlement_flag=N, sif_present must be false to pass. Any mismatch is a fail or manual_review.",
       "evidence_check": "account_tag_sif_presence",
-      "applies_to_step": "acct-2",
+      "applies_to_step": "acct-1b",
       "allowed_decisions": ["pass", "fail", "manual_review"]
     },
     {
@@ -101,7 +125,7 @@
       "title": "AR log direct settlement record",
       "description": "If settlement_flag=Y, the AR log must contain at least one row with settled_in_full_found=true to pass. If settlement_flag=N and settled_in_full_found=true, this is a contradiction and must fail.",
       "evidence_check": "arlog_settlement_evidence",
-      "applies_to_step": "acct-2",
+      "applies_to_step": "acct-2b",
       "allowed_decisions": ["pass", "fail", "insufficient_evidence"]
     },
     {
@@ -109,7 +133,7 @@
       "title": "AR log comment secondary check",
       "description": "When no direct settled_in_full rows exist, the latest AR log comment is reviewed for secondary settlement implication. If settlement_flag=Y and the comment implies settlement, this can support a pass. If settlement_flag=N and the comment implies settlement, this is a soft contradiction.",
       "evidence_check": "arlog_settlement_evidence",
-      "applies_to_step": "acct-2",
+      "applies_to_step": "acct-2b",
       "allowed_decisions": ["pass", "fail", "insufficient_evidence", "manual_review"],
       "rule_type": "conditional_fallback",
       "fallback_condition": "Only applies when settled_in_full_found is false in arlog_settlement_evidence. If settled_in_full_found is true, the AR log check is already satisfied by rule_arlog_direct — skip this rule entirely. A skipped fallback rule does NOT count as insufficient_evidence."

@@ -56,14 +56,20 @@ Sub-agent request shapes:
 Population step (pop-1):
   `{"step_id":"pop-1","step_title":"Load population batch","requested_tools":["get_population_batch"],"expected_output_type":"population_batch","start_date":"...","end_date":"...","cursor":0,"batch_size":<from checkpoint_scope>}`
 
-Evidence step (acct-1):
-  `{"step_id":"acct-1","step_title":"Collect settlement evidence","account_number":"<first account>","requested_tools":["get_account_tag_sif_presence","get_arlog_settlement_evidence"],"expected_output_type":"evidence_bundle"}`
+Evidence step (acct-1a) — SIF tag only:
+  `{"step_id":"acct-1a","step_title":"Collect SIF tag evidence","account_number":"<first account>","requested_tools":["get_account_tag_sif_presence"],"expected_output_type":"evidence_bundle"}`
 
-Step decision (acct-2):
-  `{"decision_mode":"step_decision","step_id":"acct-2","step_title":"Evaluate settlement evidence","account_context":{"account_number":"<account>","settlement_flag":"<flag>"},"evidence_bundle":<acct-1 output>,"evaluation_rules":[<rule_sif_tag>,<rule_arlog_direct>,<rule_arlog_comment>]}`
+Tag step decision (acct-1b) — rule_sif_tag only:
+  `{"decision_mode":"step_decision","step_id":"acct-1b","step_title":"Evaluate SIF tag evidence","account_context":{"account_number":"<account>","settlement_flag":"<flag>"},"evidence_bundle":<acct-1a output>,"evaluation_rules":[<rule_sif_tag>]}`
+
+Evidence step (acct-2a) — AR log only:
+  `{"step_id":"acct-2a","step_title":"Collect AR log settlement evidence","account_number":"<first account>","requested_tools":["get_arlog_settlement_evidence"],"expected_output_type":"evidence_bundle"}`
+
+AR log step decision (acct-2b) — rule_arlog_direct + conditional rule_arlog_comment:
+  `{"decision_mode":"step_decision","step_id":"acct-2b","step_title":"Evaluate AR log settlement evidence","account_context":{"account_number":"<account>","settlement_flag":"<flag>"},"evidence_bundle":<acct-2a output>,"evaluation_rules":[<rule_arlog_direct>,<rule_arlog_comment>]}`
 
 Final decision (acct-3):
-  `{"decision_mode":"final_decision","final_step_id":"acct-3","account_context":{"account_number":"<account>","settlement_flag":"<flag>"},"step_decisions":[<acct-2 decision>],"evaluation_rules":[<rule_final_aggregation>]}`
+  `{"decision_mode":"final_decision","final_step_id":"acct-3","account_context":{"account_number":"<account>","settlement_flag":"<flag>"},"step_decisions":[<acct-1b decision>,<acct-2b decision>],"evaluation_rules":[<rule_final_aggregation>]}`
 
 Return this shape after all steps complete:
 `{"task_request":"...","procedure_name":"...","batch_id":"...","current_account":"...","interpreted_steps":[{"step_id":"...","phase":"...","title":"...","preferred_agent":"...","chosen_action":"...","agent_request":{...}}],"outputs":[{"step_id":"...","phase":"...","agent_called":"...","agent_output":{...}}],"step_decision":{...},"final_decision":{...},"status":"completed"}`
