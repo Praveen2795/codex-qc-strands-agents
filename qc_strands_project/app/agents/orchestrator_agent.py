@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from strands import Agent
@@ -19,11 +20,21 @@ DEFAULT_ORCHESTRATOR_DESCRIPTION = (
 
 def load_procedure_document(task: dict[str, Any]) -> dict[str, Any]:
     """Return a structured procedure document for orchestration."""
+    if "procedure_path" in task:
+        with open(task["procedure_path"], encoding="utf-8") as procedure_file:
+            procedure_data = json.load(procedure_file)
+    else:
+        procedure_data = {
+            "qc_name": task["qc_name"],
+            "procedure_name": task["procedure_name"],
+            "steps": task["procedure_steps"],
+        }
+
     return {
         "task_request": task.get("task_request"),
-        "qc_name": task["qc_name"],
-        "procedure_name": task["procedure_name"],
-        "steps": task["procedure_steps"],
+        "qc_name": procedure_data["qc_name"],
+        "procedure_name": procedure_data["procedure_name"],
+        "steps": procedure_data["steps"],
     }
 
 
@@ -135,7 +146,7 @@ def build_orchestrator_agent(
     tools: list[Any] | None = None,
     system_prompt: str | None = None,
 ) -> Agent:
-    """Build a reusable orchestrator agent for QC workflows."""
+    """Build the checkpoint-1 reusable orchestrator agent."""
     orchestrator_tools = tools or [
         data_fetcher_agent.as_tool(
             name="fetch_structured_qc_data",

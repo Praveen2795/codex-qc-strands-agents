@@ -1,0 +1,22 @@
+{
+  "qc_name": "settlement_review_qc",
+  "procedure_name": "Settlement Review Procedure v1",
+  "steps": [
+    {
+      "step_id": "step-1",
+      "title": "Load population context",
+      "objective": "Retrieve only the account context needed for settlement review.",
+      "preferred_agent": "data_fetcher_agent",
+      "required_fields": ["account_number", "settlement_flag", "borrower", "co_borrower"],
+      "evidence_tools": []
+    },
+    {
+      "step_id": "step-2",
+      "title": "Collect evidence",
+      "objective": "Gather account-level evidence for settlement-related checks.",
+      "preferred_agent": "qc_validation_agent",
+      "required_fields": [],
+      "evidence_tools": ["get_account_tag_sif_presence", "get_arlog_settlement_evidence"]
+    }
+  ]
+}

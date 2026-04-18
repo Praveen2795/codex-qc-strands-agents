@@ -120,7 +120,7 @@ def run_data_fetcher_agent_tool_wrapper(
 
 
 def build_data_fetcher_agent(tools: list[Any] | None = None, system_prompt: str | None = None) -> Agent:
-    """Build a reusable data fetcher agent for QC workflows."""
+    """Build the checkpoint-1 reusable data fetcher agent."""
     return Agent(
         name="data_fetcher_agent",
         description=DEFAULT_DATA_FETCHER_DESCRIPTION,

@@ -1,4 +1,4 @@
-"""Shared response models and example payloads for QC workflows."""
+"""Shared response models and placeholder schema notes for QC workflows."""
 
 # These sample responses are for the first settlement QC example only.
 # They act as placeholder schemas for initial validation.
@@ -88,27 +88,3 @@ class ExecutionState(BaseModel):
     current_account: str | None = None
     completed_steps: list[str] = Field(default_factory=list)
     progress_log: list[dict[str, Any]] = Field(default_factory=list)
-
-
-FIRST_QC_EXAMPLE = QCTask(
-    qc_name="settlement_review_qc",
-    procedure_name="Settlement Review Procedure v1",
-    batch_id="batch-001",
-    accounts=["100001", "100002"],
-    procedure_steps=[
-        QCProcedureStep(
-            step_id="step-1",
-            title="Load population context",
-            objective="Retrieve only the account context needed for settlement review.",
-            preferred_agent="data_fetcher_agent",
-            required_fields=["account_number", "settlement_flag", "borrower", "co_borrower"],
-        ),
-        QCProcedureStep(
-            step_id="step-2",
-            title="Collect evidence",
-            objective="Gather account-level evidence for settlement-related checks.",
-            preferred_agent="qc_validation_agent",
-            evidence_tools=["get_account_tag_sif_presence", "get_arlog_settlement_evidence"],
-        ),
-    ],
-)

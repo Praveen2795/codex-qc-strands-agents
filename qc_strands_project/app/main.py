@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pprint import pprint
 
+from app.config import SCHEMAS_DIR, load_schema_json
 from app.agents.data_fetcher_agent import build_data_fetcher_agent
 from app.agents.orchestrator_agent import (
     build_orchestrator_agent,
     run_checkpoint_one_workflow,
 )
 from app.agents.qc_validation_agent import build_qc_validation_agent
-from app.schemas.response_examples import FIRST_QC_EXAMPLE
 
 
 def demo_workflow() -> dict:
@@ -18,7 +18,13 @@ def demo_workflow() -> dict:
     data_fetcher_agent = build_data_fetcher_agent()
     qc_validation_agent = build_qc_validation_agent()
     orchestrator_agent = build_orchestrator_agent(data_fetcher_agent, qc_validation_agent)
-    demo_task = FIRST_QC_EXAMPLE.model_dump()
+    sample_procedure = load_schema_json("sample_procedure.json")
+    demo_task = {
+        "qc_name": sample_procedure["qc_name"],
+        "procedure_name": sample_procedure["procedure_name"],
+        "batch_id": "batch-001",
+        "procedure_path": str(SCHEMAS_DIR / "sample_procedure.json"),
+    }
     demo_task["task_request"] = "Run settlement QC for February 2026"
     demo_task["start_date"] = "2026-02-01"
     demo_task["end_date"] = "2026-02-28"

@@ -105,7 +105,7 @@ def run_qc_validation_agent_tool_wrapper(
 
 
 def build_qc_validation_agent(tools: list[Any] | None = None, system_prompt: str | None = None) -> Agent:
-    """Build a reusable evidence collection agent for QC workflows."""
+    """Build the checkpoint-1 reusable QC validation agent."""
     return Agent(
         name="qc_validation_agent",
         description=DEFAULT_QC_VALIDATION_DESCRIPTION,
