@@ -57,6 +57,7 @@ def compact_procedure_for_llm(procedure: dict) -> dict:
     def _slim_rule(rule: dict) -> dict:
         return {k: rule[k] for k in (
             "rule_id", "title", "applies_to_step", "allowed_decisions",
+            "rule_type", "fallback_condition",
         ) if k in rule}
 
     def _slim_agent(agent: dict) -> dict:

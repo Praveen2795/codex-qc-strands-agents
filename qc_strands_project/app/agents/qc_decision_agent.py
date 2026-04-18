@@ -174,27 +174,39 @@ def validate_decision_input(request: dict[str, Any]) -> str | None:
 def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
     """Apply settlement QC step-level rules against an evidence bundle.
 
-    Implements the agreed settlement QC decision matrix:
+    Evaluates ONLY the rules explicitly listed in `evaluation_rules` for the
+    current step — no other rule logic is executed.
 
-    Rule 1 — account_tag SIF presence vs settlement_flag:
-        flag=Y + sif_present=true  → pass
-        flag=Y + sif_present=false → manual_review
-        flag=N + sif_present=true  → fail
-        flag=N + sif_present=false → pass
+    Rule dispatch table:
+        rule_sif_tag    — account tag SIF presence vs settlement_flag
+        rule_arlog_direct   — AR log direct settled_in_full rows vs settlement_flag
+        rule_arlog_comment  — AR log comment fallback (CONDITIONAL: skipped when
+                              settled_in_full_found is true; skipping is not an error)
 
-    Rule 2/3 — AR log evidence vs settlement_flag:
-        flag=Y + settled_in_full_found=true         → pass
-        flag=Y + comment implies settlement          → pass
-        flag=Y + neither                             → insufficient_evidence
-        flag=N + settled_in_full_found=true          → fail
-        flag=N + comment implies settlement           → fail
-        flag=N + neither                             → pass
+    Per-rule decision matrix:
+        rule_sif_tag:
+            flag=Y + sif_present=true  → pass
+            flag=Y + sif_present=false → manual_review
+            flag=N + sif_present=true  → fail
+            flag=N + sif_present=false → pass
+
+        rule_arlog_direct:
+            flag=Y + settled_in_full_found=true  → pass
+            flag=Y + settled_in_full_found=false → insufficient_evidence
+            flag=N + settled_in_full_found=true  → fail
+            flag=N + settled_in_full_found=false → pass
+
+        rule_arlog_comment (only when settled_in_full_found=false):
+            flag=Y + comment_implies_settlement=true  → pass
+            flag=Y + comment_implies_settlement=false → insufficient_evidence
+            flag=N + comment_implies_settlement=true  → fail
+            flag=N + comment_implies_settlement=false → pass
 
     Step outcome aggregation (any_fail_fails policy):
-        any fail              → step decision = fail
-        any insufficient_evidence → step decision = insufficient_evidence
-        any manual_review     → step decision = manual_review
-        all pass              → step decision = pass
+        any fail                   → step decision = fail
+        any insufficient_evidence  → step decision = insufficient_evidence
+        any manual_review          → step decision = manual_review
+        all pass                   → step decision = pass
     """
     account_ctx = request.get("account_context", {})
     account_number = account_ctx.get("account_number", "unknown")
@@ -202,7 +214,7 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
 
     evidence_bundle = request.get("evidence_bundle", {})
     step_id = request.get("step_id", "")
-    rules = request.get("evaluation_rules", [])
+    rules: list[dict[str, Any]] = request.get("evaluation_rules", [])
     rule_ids = [r["rule_id"] for r in rules if "rule_id" in r]
 
     # Locate individual evidence checks from the bundle
@@ -222,37 +234,77 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
         for phrase in ("settled", "settlement", "paid in full", "resolved")
     )
 
+    # Build used_checks from evidence families referenced by the active rules only
+    rule_id_set = set(rule_ids)
     used_checks: list[str] = []
-    if tag_check:
+    if ("rule_sif_tag" in rule_id_set) and tag_check:
         used_checks.append("account_tag_sif_presence")
-    if arlog_check:
+    if ({"rule_arlog_direct", "rule_arlog_comment"} & rule_id_set) and arlog_check:
         used_checks.append("arlog_settlement_evidence")
 
-    # Rule 1: SIF tag vs settlement_flag
-    if settlement_flag == "Y":
-        rule1_outcome = "pass" if sif_present else "manual_review"
-    elif settlement_flag == "N":
-        rule1_outcome = "fail" if sif_present else "pass"
-    else:
-        rule1_outcome = "manual_review"
+    # Evaluate only the rules present in this step's evaluation_rules
+    sub_outcomes: list[str] = []
+    active_rule_ids: list[str] = []
 
-    # Rule 2/3: AR log vs settlement_flag
-    if settlement_flag == "Y":
-        if settled_in_full_found or comment_implies_settlement:
-            rule23_outcome = "pass"
+    for rule in rules:
+        rid = rule.get("rule_id")
+        if not rid:
+            continue
+
+        if rid == "rule_sif_tag":
+            if settlement_flag == "Y":
+                outcome = "pass" if sif_present else "manual_review"
+            elif settlement_flag == "N":
+                outcome = "fail" if sif_present else "pass"
+            else:
+                outcome = "manual_review"
+            sub_outcomes.append(outcome)
+            active_rule_ids.append(rid)
+
+        elif rid == "rule_arlog_direct":
+            if settlement_flag == "Y":
+                outcome = "pass" if settled_in_full_found else "insufficient_evidence"
+            elif settlement_flag == "N":
+                outcome = "fail" if settled_in_full_found else "pass"
+            else:
+                outcome = "manual_review"
+            sub_outcomes.append(outcome)
+            active_rule_ids.append(rid)
+
+        elif rid == "rule_arlog_comment":
+            # Conditional fallback: skip entirely when direct AR evidence already exists
+            rule_type = rule.get("rule_type", "standard")
+            if rule_type == "conditional_fallback" and settled_in_full_found:
+                # Direct evidence satisfied the AR log check — fallback not needed
+                logger.info(
+                    "rule_skipped rule_id=%s reason=direct_ar_evidence_present account_number=%s",
+                    rid,
+                    account_number,
+                )
+                # Do NOT add to sub_outcomes or active_rule_ids
+                continue
+            # Fallback applies — direct evidence is absent
+            if settlement_flag == "Y":
+                outcome = "pass" if comment_implies_settlement else "insufficient_evidence"
+            elif settlement_flag == "N":
+                outcome = "fail" if comment_implies_settlement else "pass"
+            else:
+                outcome = "manual_review"
+            sub_outcomes.append(outcome)
+            active_rule_ids.append(rid)
+
         else:
-            rule23_outcome = "insufficient_evidence"
-    elif settlement_flag == "N":
-        if settled_in_full_found or comment_implies_settlement:
-            rule23_outcome = "fail"
-        else:
-            rule23_outcome = "pass"
-    else:
-        rule23_outcome = "manual_review"
+            # Unknown rule — log and skip rather than fail silently
+            logger.warning(
+                "unknown_rule_id rule_id=%s step_id=%s account_number=%s — skipped",
+                rid, step_id, account_number,
+            )
 
     # Aggregate sub-outcomes (any_fail_fails policy)
-    sub_outcomes = [rule1_outcome, rule23_outcome]
-    if "fail" in sub_outcomes:
+    if not sub_outcomes:
+        step_decision = "insufficient_evidence"
+        reason = "No applicable rules were evaluated for this step."
+    elif "fail" in sub_outcomes:
         step_decision = "fail"
     elif "insufficient_evidence" in sub_outcomes:
         step_decision = "insufficient_evidence"
@@ -261,20 +313,22 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
     else:
         step_decision = "pass"
 
-    reason = _build_step_reason(
-        flag=settlement_flag,
-        sif_present=sif_present,
-        settled_found=settled_in_full_found,
-        comment_implies=comment_implies_settlement,
-        decision=step_decision,
-    )
+    if sub_outcomes:
+        reason = _build_step_reason(
+            flag=settlement_flag,
+            sif_present=sif_present,
+            settled_found=settled_in_full_found,
+            comment_implies=comment_implies_settlement,
+            decision=step_decision,
+            active_rule_ids=active_rule_ids,
+        )
 
     logger.info(
-        "step_decision_rules account_number=%s flag=%s rule1=%s rule23=%s decision=%s",
+        "step_decision_rules account_number=%s flag=%s active_rules=%s sub_outcomes=%s decision=%s",
         account_number,
         settlement_flag,
-        rule1_outcome,
-        rule23_outcome,
+        active_rule_ids,
+        sub_outcomes,
         step_decision,
     )
 
@@ -295,8 +349,10 @@ def _build_step_reason(
     settled_found: bool,
     comment_implies: bool,
     decision: str,
+    active_rule_ids: list[str] | None = None,
 ) -> str:
     """Build a concise human-readable reason string for a step-level decision."""
+    rules_note = f" Rules evaluated: {active_rule_ids}." if active_rule_ids else ""
     evidence_summary = (
         f"settlement_flag={flag}; "
         f"sif_present={sif_present}; "
@@ -310,7 +366,7 @@ def _build_step_reason(
         "manual_review": "Ambiguous evidence requires manual review.",
     }
     prefix = prefix_map.get(decision, "Decision outcome unclear.")
-    return f"{prefix} {evidence_summary}."
+    return f"{prefix}{rules_note} {evidence_summary}."
 
 
 def _apply_final_decision_rules(request: dict[str, Any]) -> dict[str, Any]:

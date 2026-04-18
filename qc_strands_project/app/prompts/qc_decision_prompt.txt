@@ -27,7 +27,22 @@ Your task:
 - Determine whether the current step passes, fails, or is insufficient/ambiguous.
 - Return a structured step-level decision.
 
-Allowed decisions for step_decision:
+## Evaluation rules — standard vs conditional fallback
+
+Most rules are **standard** — apply them unconditionally to the evidence.
+
+Some rules carry `"rule_type": "conditional_fallback"` with a `"fallback_condition"` field.
+**Before applying a conditional fallback rule**, read its `fallback_condition` and check it against the evidence bundle:
+
+- If the fallback condition says to skip the rule (e.g. direct evidence already satisfied the check), **omit the rule from evaluation entirely**.
+- A skipped conditional fallback rule contributes **nothing** to the decision — it does not produce `"insufficient_evidence"`, `"pass"`, or any other outcome.
+- Only evaluate a conditional fallback rule when its condition is met (e.g. direct evidence is absent and the fallback is the only available check).
+
+Example: `rule_arlog_comment` has `"rule_type": "conditional_fallback"` and its `fallback_condition` states it only applies when `settled_in_full_found` is false. If `settled_in_full_found` is true in the evidence bundle, skip `rule_arlog_comment` entirely — it does not count and does not affect the decision.
+
+---
+
+## Allowed decisions for step_decision
 - `"pass"` — evidence satisfies all applicable rules
 - `"fail"` — evidence contradicts one or more rules
 - `"insufficient_evidence"` — evidence is missing or incomplete and cannot support a pass or fail

@@ -110,7 +110,9 @@
       "description": "When no direct settled_in_full rows exist, the latest AR log comment is reviewed for secondary settlement implication. If settlement_flag=Y and the comment implies settlement, this can support a pass. If settlement_flag=N and the comment implies settlement, this is a soft contradiction.",
       "evidence_check": "arlog_settlement_evidence",
       "applies_to_step": "acct-2",
-      "allowed_decisions": ["pass", "fail", "insufficient_evidence", "manual_review"]
+      "allowed_decisions": ["pass", "fail", "insufficient_evidence", "manual_review"],
+      "rule_type": "conditional_fallback",
+      "fallback_condition": "Only applies when settled_in_full_found is false in arlog_settlement_evidence. If settled_in_full_found is true, the AR log check is already satisfied by rule_arlog_direct — skip this rule entirely. A skipped fallback rule does NOT count as insufficient_evidence."
     },
     {
       "rule_id": "rule_final_aggregation",
