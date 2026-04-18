@@ -2,36 +2,40 @@
 
 from __future__ import annotations
 
+import json
 from pprint import pprint
 
-from app.config import SCHEMAS_DIR, load_schema_json
+from app.config import load_schema_json, normalize_agent_tool_output, parse_json_response_text
 from app.agents.data_fetcher_agent import build_data_fetcher_agent
 from app.agents.orchestrator_agent import (
     build_orchestrator_agent,
-    run_checkpoint_one_workflow,
 )
 from app.agents.qc_validation_agent import build_qc_validation_agent
 
 
 def demo_workflow() -> dict:
-    """Demonstrate the reusable agent skeleton with one QC example."""
+    """Demonstrate the Phase 2 agent-driven orchestration flow."""
     data_fetcher_agent = build_data_fetcher_agent()
     qc_validation_agent = build_qc_validation_agent()
     orchestrator_agent = build_orchestrator_agent(data_fetcher_agent, qc_validation_agent)
     sample_procedure = load_schema_json("sample_procedure.json")
-    demo_task = {
+    demo_task: dict[str, object] = {
         "qc_name": sample_procedure["qc_name"],
         "procedure_name": sample_procedure["procedure_name"],
         "batch_id": "batch-001",
-        "procedure_path": str(SCHEMAS_DIR / "sample_procedure.json"),
+        "procedure_document": sample_procedure,
     }
     demo_task["task_request"] = "Run settlement QC for February 2026"
     demo_task["start_date"] = "2026-02-01"
     demo_task["end_date"] = "2026-02-28"
-    checkpoint_result = run_checkpoint_one_workflow(
-        demo_task,
-        data_fetcher_agent=data_fetcher_agent,
-        qc_validation_agent=qc_validation_agent,
+    demo_task["checkpoint_scope"] = {
+        "max_population_batches": 1,
+        "max_accounts_to_process": 1,
+        "selection_rule": "process the first account only",
+        "batch_size": 2,
+    }
+    checkpoint_result = normalize_agent_tool_output(
+        parse_json_response_text(str(orchestrator_agent(json.dumps(demo_task))))
     )
 
     return {

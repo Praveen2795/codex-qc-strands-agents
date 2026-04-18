@@ -1,4 +1,3 @@
-strands-agents
+strands-agents[gemini]
 strands-agents-tools
 strands-agents-builder
-
