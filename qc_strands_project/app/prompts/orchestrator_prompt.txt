@@ -54,13 +54,13 @@ Orchestration rules:
 
 5. For `step_decision` steps:
    - Set `decision_mode` to `"step_decision"`.
-   - Pass `account_context` with ALL work item fields from the population output, including account_number, settlement_flag, borrower, and co_borrower.
+   - Pass `account_context` with ALL work item fields returned by the population phase for this account.
    - Pass `evidence_bundle` from the most recent preceding `evidence_collection` step output.
    - Pass `evaluation_rules` filtered to only the `evaluation_rule_ids` listed on this step.
 
 6. For `final_decision` steps:
    - Set `decision_mode` to `"final_decision"`.
-   - Pass `account_context` with ALL work item fields from the population output, including account_number, settlement_flag, borrower, and co_borrower.
+   - Pass `account_context` with ALL work item fields returned by the population phase for this account.
    - Pass `step_decisions` as a list of all completed step-level decision outputs so far.
    - Pass `evaluation_rules` filtered to only the `evaluation_rule_ids` listed on this step.
 
