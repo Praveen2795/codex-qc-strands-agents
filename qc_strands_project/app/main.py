@@ -104,6 +104,11 @@ def _persist_account_result(jsonl_path: Path, record: dict) -> None:
         fh.write(json.dumps(record, default=str) + "\n")
 
 
+def _reset_jsonl(jsonl_path: Path) -> None:
+    """Truncate the JSONL file at the start of a run so each run starts clean."""
+    jsonl_path.write_text("", encoding="utf-8")
+
+
 # ── Live trace callback ───────────────────────────────────────────────────────
 
 class ConsoleTraceCallbackHandler:
@@ -211,6 +216,7 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
     logger.info("demo_model_mode=local_deterministic")
 
     jsonl_path = run_log_path.with_suffix(".jsonl")
+    _reset_jsonl(jsonl_path)
 
     data_fetcher_agent = build_data_fetcher_agent()
     qc_validation_agent = build_qc_validation_agent()
@@ -451,6 +457,7 @@ def run_local_sequential_demo() -> dict:
     logger.info("local_sequential_demo_started")
 
     jsonl_path = run_log_path.with_suffix(".jsonl")
+    _reset_jsonl(jsonl_path)
 
     sample_procedure = load_schema_json("sample_procedure.json")
     evaluation_rules = sample_procedure.get("evaluation_rules", [])
@@ -648,6 +655,7 @@ def run_multi_account_test() -> list[dict]:
     logger.info("multi_account_test_started accounts=%d", len(_TEST_ACCOUNTS))
 
     jsonl_path = run_log_path.with_suffix(".jsonl")
+    _reset_jsonl(jsonl_path)
 
     sample_procedure = load_schema_json("sample_procedure.json")
     evaluation_rules = sample_procedure.get("evaluation_rules", [])

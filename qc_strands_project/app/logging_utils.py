@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -229,12 +228,14 @@ class ModelCallRetryHook(HookProvider):
 
 
 def setup_project_logging(run_name: str = "demo_flow") -> Path:
-    """Configure file logging for the project and return the run log path."""
+    """Configure file logging for the project and return the run log path.
+
+    Each run overwrites the same fixed file (<run_name>.log) so the logs/
+    folder stays clean — only one log and one JSONL per run mode.
+    """
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_log_path = LOGS_DIR / f"{run_name}_{timestamp}.log"
-    latest_log_path = LOGS_DIR / "latest.log"
+    run_log_path = LOGS_DIR / f"{run_name}.log"
 
     formatter = logging.Formatter(
         fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -248,10 +249,6 @@ def setup_project_logging(run_name: str = "demo_flow") -> Path:
     file_handler = logging.FileHandler(run_log_path, mode="w", encoding="utf-8")
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
-
-    latest_handler = logging.FileHandler(latest_log_path, mode="w", encoding="utf-8")
-    latest_handler.setFormatter(formatter)
-    root_logger.addHandler(latest_handler)
 
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
@@ -267,9 +264,8 @@ def setup_project_logging(run_name: str = "demo_flow") -> Path:
     logging.getLogger("google.genai").setLevel(logging.WARNING)
 
     logging.getLogger("qc_strands").info(
-        "logging_initialized run_log=%s latest_log=%s strands_level=%s",
+        "logging_initialized run_log=%s strands_level=%s",
         run_log_path,
-        latest_log_path,
         logging.getLevelName(strands_level),
     )
     return run_log_path
