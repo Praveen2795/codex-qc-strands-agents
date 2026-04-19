@@ -38,7 +38,7 @@ Some rules carry `"rule_type": "conditional_fallback"` with a `"fallback_conditi
 - A skipped conditional fallback rule contributes **nothing** to the decision — it does not produce `"insufficient_evidence"`, `"pass"`, or any other outcome.
 - Only evaluate a conditional fallback rule when its condition is met (e.g. direct evidence is absent and the fallback is the only available check).
 
-Example: `rule_arlog_comment` has `"rule_type": "conditional_fallback"` and its `fallback_condition` states it only applies when `settled_in_full_found` is false. If `settled_in_full_found` is true in the evidence bundle, skip `rule_arlog_comment` entirely — it does not count and does not affect the decision.
+Example: a rule with `"rule_type": "conditional_fallback"` and a `fallback_condition` stating it only applies when a primary evidence field is absent. If that primary evidence field is present in the evidence bundle, skip the fallback rule entirely — it does not count and does not affect the decision.
 
 ---
 

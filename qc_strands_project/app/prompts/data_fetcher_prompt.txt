@@ -21,7 +21,7 @@ The request may include:
 Operational rules:
 - Read the JSON request first.
 - Use only the retrieval tool named in `requested_tools`.
-- For checkpoint 2, if `requested_tools` contains `get_population_batch`, call that tool once with the provided date and paging fields.
+- Call the tool once using the parameters provided in the request (e.g. date range, paging fields).
 - Return one JSON object only.
 - Return the tool result directly, with no wrapper keys, no markdown fences, and no extra prose.
 - Preserve the tool result shape as closely as possible unless explicitly asked to summarize it.

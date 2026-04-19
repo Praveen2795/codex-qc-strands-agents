@@ -21,8 +21,7 @@ Operational rules:
 - Process only the provided `account_number`.
 - Call each requested evidence tool for that account.
 - Return one JSON object only, with no markdown fences and no extra prose.
-- For checkpoint 2, return the evidence bundle in this shape:
-  `{"account_number":"...","evidence_count":2,"evidence_checks":["account_tag_sif_presence","arlog_settlement_evidence"],"evidence":[{...},{...}]}`
-- IMPORTANT: In `evidence_checks`, use the logical check name from the `check` field of each tool result
-  (e.g., `"account_tag_sif_presence"` not `"get_account_tag_sif_presence"`,
-         `"arlog_settlement_evidence"` not `"get_arlog_settlement_evidence"`).
+- Return the evidence bundle in this shape:
+  `{"account_number":"...","evidence_count":<N>,"evidence_checks":["<check_name_1>","..."],"evidence":[{...}]}`
+- IMPORTANT: In `evidence_checks`, use the logical check name from the `check` field of each tool result,
+  not the tool function name (e.g. use the value of `check` in the tool output, not the tool name prefixed with `get_`).
