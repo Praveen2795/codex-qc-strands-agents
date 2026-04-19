@@ -65,7 +65,7 @@ def build_orchestrator_agent(
         tools=orchestrator_tools,
         callback_handler=create_agent_callback_handler("orchestrator_agent"),
         hooks=[
-            SubAgentResponseValidationHook(max_retries=2),
+            SubAgentResponseValidationHook(),
             ModelCallRetryHook(max_retries=3),
         ],
     )

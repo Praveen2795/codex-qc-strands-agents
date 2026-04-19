@@ -18,7 +18,7 @@ from strands.hooks import (
     HookRegistry,
 )
 
-from app.config import LOGS_DIR
+from app.config import LOGS_DIR, parse_json_response_text
 
 logger = logging.getLogger("qc_strands.hooks")
 
@@ -106,26 +106,23 @@ _REQUIRED_FIELDS: dict[str, list[str]] = {
 
 
 class SubAgentResponseValidationHook(HookProvider):
-    """Validate sub-agent JSON responses after every tool call on the orchestrator.
+    """Validate and log sub-agent JSON responses after every tool call on the orchestrator.
 
     Fires on ``AfterToolCallEvent`` for the three orchestrator sub-agent tools:
     ``collect_qc_evidence``, ``make_qc_decision``, and ``fetch_structured_qc_data``.
 
     For each call:
-    - Parses the returned content as JSON.
+    - Parses the returned content as JSON (stripping markdown code fences if present).
     - Checks that all required fields for that tool are present.
-    - If the response is malformed or missing required fields, marks the result
-      as ``"error"`` so the LLM receives a clear error message rather than
-      silently processing a broken payload.
-    - If ``attempt <= max_retries``, sets ``event.retry = True`` so the SDK
-      re-invokes the sub-agent automatically (same ``tool_use_id``).
+    - Logs warnings for malformed JSON or missing required fields (observability only).
 
-    Max retries defaults to 2.  Attempt counts are tracked per ``tool_use_id``
-    and cleaned up on success to avoid unbounded memory growth.
+    NOTE: ``event.retry = True`` is intentionally NOT used here. Strands agent-as-tool
+    sub-agents track active requests by ID and reject duplicate invocations while still
+    processing, causing "agent is already processing" failures. The orchestrator LLM is
+    responsible for retrying failed sub-agent calls naturally when it receives an error.
     """
 
-    def __init__(self, max_retries: int = 2) -> None:
-        self.max_retries = max_retries
+    def __init__(self) -> None:
         self._attempt_counts: dict[str, int] = {}
 
     def register_hooks(self, registry: HookRegistry) -> None:
@@ -141,58 +138,42 @@ class SubAgentResponseValidationHook(HookProvider):
         attempt = self._attempt_counts.get(tool_use_id, 0) + 1
         self._attempt_counts[tool_use_id] = attempt
 
-        # If the tool already returned an SDK-level error, let retry handle it
+        # SDK-level tool error — log only; the orchestrator LLM will see the error naturally
         if event.result.get("status") == "error":
-            if attempt <= self.max_retries:
-                logger.warning(
-                    "sub_agent_tool_error tool=%s attempt=%d/%d — retrying",
-                    tool_name, attempt, self.max_retries,
-                )
-                event.retry = True
-            else:
-                logger.error(
-                    "sub_agent_tool_error tool=%s attempt=%d — max retries exhausted",
-                    tool_name, attempt,
-                )
+            logger.warning(
+                "sub_agent_tool_error tool=%s attempt=%d — sdk error, letting orchestrator handle",
+                tool_name, attempt,
+            )
             return
 
         # Parse the response content
         content_text: str = ""
         try:
             content_text = event.result["content"][0]["text"]
-            parsed = json.loads(content_text)
-        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
-            error_msg = f"sub-agent '{tool_name}' returned malformed JSON: {exc}"
+            parsed = parse_json_response_text(content_text)
+        except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError) as exc:
             logger.warning(
-                "sub_agent_malformed_json tool=%s attempt=%d/%d content=%r error=%s",
-                tool_name, attempt, self.max_retries, content_text[:200], exc,
+                "sub_agent_malformed_json tool=%s attempt=%d content=%r error=%s",
+                tool_name, attempt, content_text[:200], exc,
             )
-            event.result["status"] = "error"
-            event.result["content"][0]["text"] = f"Error: {error_msg}"
-            if attempt <= self.max_retries:
-                event.retry = True
+            # Don't set retry — agent-as-tool retries via event.retry are not supported
+            # and cause "agent is already processing" errors. Let the LLM handle it.
             return
 
-        # Check required fields
+        # Check required fields — warn only, don't override result
         missing = [f for f in required if f not in parsed]
         if missing:
-            error_msg = f"sub-agent '{tool_name}' response missing required fields: {missing}"
             logger.warning(
-                "sub_agent_missing_fields tool=%s attempt=%d/%d missing=%s",
-                tool_name, attempt, self.max_retries, missing,
+                "sub_agent_missing_fields tool=%s attempt=%d missing=%s (observability only)",
+                tool_name, attempt, missing,
             )
-            event.result["status"] = "error"
-            event.result["content"][0]["text"] = f"Error: {error_msg}"
-            if attempt <= self.max_retries:
-                event.retry = True
-            return
-
-        # Valid response — clean up tracking
-        self._attempt_counts.pop(tool_use_id, None)
-        logger.info(
-            "sub_agent_response_valid tool=%s attempt=%d fields_ok=%s",
-            tool_name, attempt, required,
-        )
+        else:
+            # Valid response — clean up tracking
+            self._attempt_counts.pop(tool_use_id, None)
+            logger.info(
+                "sub_agent_response_valid tool=%s attempt=%d fields_ok=%s",
+                tool_name, attempt, required,
+            )
 
 
 class ModelCallRetryHook(HookProvider):

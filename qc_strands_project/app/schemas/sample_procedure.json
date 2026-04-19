@@ -33,7 +33,7 @@
         "objective": "Retrieve a paginated batch of accounts in scope for this QC run.",
         "preferred_agent": "data_fetcher_agent",
         "required_output_fields": ["account_number", "settlement_flag", "borrower", "co_borrower"],
-        "evidence_tools": [],
+        "evidence_tools": ["get_population_batch"],
         "depends_on": [],
         "evaluation_rule_ids": [],
         "decision_policy": null
