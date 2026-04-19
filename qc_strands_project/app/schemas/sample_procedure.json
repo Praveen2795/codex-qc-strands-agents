@@ -163,7 +163,7 @@
     "description": "Defines the expected fields of each per-account QC result produced by the orchestrator. The orchestrator must populate all account_level_fields for every successfully processed account.",
     "account_level_fields": [
       {"field": "account_number",         "type": "string", "description": "The account identifier from the population phase."},
-      {"field": "account_context",        "type": "object", "description": "Full account context carried from the population output (settlement_flag, borrower, etc.)."},
+      {"field": "account_context",        "type": "object", "description": "Full account context carried from the population output. Must include all fields from the population step's required_output_fields: account_number, settlement_flag, borrower, co_borrower."},
       {"field": "step_outputs",           "type": "object", "description": "Keyed by step_id. Contains the raw evidence bundle returned by each evidence_collection step."},
       {"field": "step_decisions",         "type": "object", "description": "Keyed by step_id. Contains the decision string (pass / fail / insufficient_evidence / manual_review) for each step_decision step. Does NOT include the final_decision step."},
       {"field": "step_decision_reasons",  "type": "object", "description": "Keyed by step_id. Contains one concise reason string for each step_decision step."},

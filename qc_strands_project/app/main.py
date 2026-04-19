@@ -287,6 +287,8 @@ def demo_workflow(*, verbose: bool = False) -> dict:
         "batch_id": checkpoint_result.get("batch_id"),
         "account_number": _ar.get("account_number"),
         "settlement_flag": _acct_ctx.get("settlement_flag") if isinstance(_acct_ctx, dict) else None,
+        "borrower": _acct_ctx.get("borrower") if isinstance(_acct_ctx, dict) else None,
+        "co_borrower": _acct_ctx.get("co_borrower") if isinstance(_acct_ctx, dict) else None,
         "final_decision": _ar.get("final_decision"),
         "final_decision_reason": _ar.get("final_decision_reason"),
         "step_decisions": _ar.get("step_decisions", {}),
