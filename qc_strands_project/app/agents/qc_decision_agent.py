@@ -245,6 +245,8 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
     # Evaluate only the rules present in this step's evaluation_rules
     sub_outcomes: list[str] = []
     active_rule_ids: list[str] = []
+    skipped_rule_ids: list[str] = []
+    rule_outcomes: dict[str, str] = {}
 
     for rule in rules:
         rid = rule.get("rule_id")
@@ -260,6 +262,7 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
                 outcome = "manual_review"
             sub_outcomes.append(outcome)
             active_rule_ids.append(rid)
+            rule_outcomes[rid] = outcome
 
         elif rid == "rule_arlog_direct":
             if settlement_flag == "Y":
@@ -270,6 +273,7 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
                 outcome = "manual_review"
             sub_outcomes.append(outcome)
             active_rule_ids.append(rid)
+            rule_outcomes[rid] = outcome
 
         elif rid == "rule_arlog_comment":
             # Conditional fallback: skip entirely when direct AR evidence already exists
@@ -281,7 +285,8 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
                     rid,
                     account_number,
                 )
-                # Do NOT add to sub_outcomes or active_rule_ids
+                skipped_rule_ids.append(rid)
+                rule_outcomes[rid] = "skipped"
                 continue
             # Fallback applies — direct evidence is absent
             if settlement_flag == "Y":
@@ -292,6 +297,7 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
                 outcome = "manual_review"
             sub_outcomes.append(outcome)
             active_rule_ids.append(rid)
+            rule_outcomes[rid] = outcome
 
         else:
             # Unknown rule — log and skip rather than fail silently
@@ -340,6 +346,8 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
         "reason": reason,
         "used_rule_ids": rule_ids,
         "used_evidence_checks": used_checks,
+        "skipped_rule_ids": skipped_rule_ids,
+        "rule_outcomes": rule_outcomes,
     }
 
 
@@ -436,6 +444,8 @@ def summarize_step_decision(raw: dict[str, Any]) -> dict[str, Any]:
         "reason": raw.get("reason", ""),
         "used_rule_ids": raw.get("used_rule_ids", []),
         "used_evidence_checks": raw.get("used_evidence_checks", []),
+        "skipped_rule_ids": raw.get("skipped_rule_ids", []),
+        "rule_outcomes": raw.get("rule_outcomes", {}),
     }
 
 

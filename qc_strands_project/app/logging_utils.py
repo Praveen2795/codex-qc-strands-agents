@@ -37,18 +37,19 @@ class AgentFileCallbackHandler:
 
     def __call__(self, **kwargs: Any) -> None:
         """Capture tool starts and completed response text from Strands callbacks."""
-        event = kwargs.get("event", {}) or {}
         data = kwargs.get("data", "")
         complete = kwargs.get("complete", False)
         reasoning_text = kwargs.get("reasoningText")
 
-        tool_use = event.get("contentBlockStart", {}).get("start", {}).get("toolUse")
-        if tool_use:
+        # current_tool_use is the official Strands kwarg; input is accumulated as streaming occurs
+        current_tool_use = kwargs.get("current_tool_use") or {}
+        tool_name = current_tool_use.get("name")
+        if tool_name and current_tool_use.get("input") is not None:
             self.logger.info(
                 "tool_start agent=%s tool=%s input=%s",
                 self.agent_name,
-                tool_use.get("name"),
-                _compact_value(tool_use.get("input", {})),
+                tool_name,
+                _compact_value(current_tool_use.get("input", {})),
             )
 
         if reasoning_text:
@@ -75,6 +76,11 @@ class AgentFileCallbackHandler:
 def create_agent_callback_handler(agent_name: str) -> AgentFileCallbackHandler:
     """Create a per-agent callback handler for log-file observability."""
     return AgentFileCallbackHandler(agent_name)
+
+
+# Re-export the SDK's built-in CompositeCallbackHandler so callers can import
+# it from this module without knowing the SDK path.
+from strands.handlers.callback_handler import CompositeCallbackHandler  # noqa: E402
 
 
 def setup_project_logging(run_name: str = "demo_flow") -> Path:
@@ -110,6 +116,10 @@ def setup_project_logging(run_name: str = "demo_flow") -> Path:
     strands_level_name = os.getenv("STRANDS_LOG_LEVEL", "WARNING").upper()
     strands_level = getattr(logging, strands_level_name, logging.WARNING)
     logging.getLogger("strands").setLevel(strands_level)
+
+    # Suppress verbose AFC confirmation prints from the google-genai SDK
+    logging.getLogger("google_genai").setLevel(logging.WARNING)
+    logging.getLogger("google.genai").setLevel(logging.WARNING)
 
     logging.getLogger("qc_strands").info(
         "logging_initialized run_log=%s latest_log=%s strands_level=%s",

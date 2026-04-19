@@ -22,4 +22,7 @@ Operational rules:
 - Call each requested evidence tool for that account.
 - Return one JSON object only, with no markdown fences and no extra prose.
 - For checkpoint 2, return the evidence bundle in this shape:
-  `{"account_number":"...","evidence_count":2,"evidence_checks":["...","..."],"evidence":[{...},{...}]}`
+  `{"account_number":"...","evidence_count":2,"evidence_checks":["account_tag_sif_presence","arlog_settlement_evidence"],"evidence":[{...},{...}]}`
+- IMPORTANT: In `evidence_checks`, use the logical check name from the `check` field of each tool result
+  (e.g., `"account_tag_sif_presence"` not `"get_account_tag_sif_presence"`,
+         `"arlog_settlement_evidence"` not `"get_arlog_settlement_evidence"`).

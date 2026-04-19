@@ -104,6 +104,8 @@ def _step_decision_deterministic(request: dict[str, Any]) -> dict[str, Any]:
 
     sub_outcomes: list[str] = []
     active_rule_ids: list[str] = []
+    skipped_rule_ids: list[str] = []
+    rule_outcomes: dict[str, str] = {}
 
     for rule in rules:
         rid = rule.get("rule_id")
@@ -119,6 +121,7 @@ def _step_decision_deterministic(request: dict[str, Any]) -> dict[str, Any]:
                 outcome = "manual_review"
             sub_outcomes.append(outcome)
             active_rule_ids.append(rid)
+            rule_outcomes[rid] = outcome
 
         elif rid == "rule_arlog_direct":
             if settlement_flag == "Y":
@@ -129,10 +132,13 @@ def _step_decision_deterministic(request: dict[str, Any]) -> dict[str, Any]:
                 outcome = "manual_review"
             sub_outcomes.append(outcome)
             active_rule_ids.append(rid)
+            rule_outcomes[rid] = outcome
 
         elif rid == "rule_arlog_comment":
             # Conditional fallback: skip when direct AR evidence is already present
             if rule.get("rule_type") == "conditional_fallback" and settled_in_full_found:
+                skipped_rule_ids.append(rid)
+                rule_outcomes[rid] = "skipped"
                 continue
             if settlement_flag == "Y":
                 outcome = "pass" if comment_implies else "insufficient_evidence"
@@ -142,6 +148,7 @@ def _step_decision_deterministic(request: dict[str, Any]) -> dict[str, Any]:
                 outcome = "manual_review"
             sub_outcomes.append(outcome)
             active_rule_ids.append(rid)
+            rule_outcomes[rid] = outcome
 
     if not sub_outcomes:
         decision = "insufficient_evidence"
@@ -175,6 +182,8 @@ def _step_decision_deterministic(request: dict[str, Any]) -> dict[str, Any]:
         "reason": reason,
         "used_rule_ids": active_rule_ids,
         "used_evidence_checks": used_checks,
+        "skipped_rule_ids": skipped_rule_ids,
+        "rule_outcomes": rule_outcomes,
     }
 
 

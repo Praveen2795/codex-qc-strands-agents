@@ -20,7 +20,7 @@ from app.agents.orchestrator_agent import (
 )
 from app.agents.qc_decision_agent import build_qc_decision_agent, run_qc_decision_agent_wrapper
 from app.agents.qc_validation_agent import build_qc_validation_agent
-from app.logging_utils import setup_project_logging
+from app.logging_utils import setup_project_logging, CompositeCallbackHandler
 from app.tools.arlog_tools import get_arlog_settlement_evidence
 from app.tools.population_tools import get_population_batch
 from app.tools.tag_tools import get_account_tag_sif_presence
@@ -93,7 +93,11 @@ def _wrap(text: str, indent: int = 6, width: int = 68) -> None:
 # ── Live trace callback ───────────────────────────────────────────────────────
 
 class ConsoleTraceCallbackHandler:
-    """Prints each tool invocation and agent response to stdout as they happen."""
+    """Prints each tool invocation and agent response to stdout as they happen.
+
+    Set verbose=True to also print the full JSON request/response payloads
+    for sub-agent calls (collect_qc_evidence and make_qc_decision).
+    """
 
     TOOL_LABELS = {
         "fetch_structured_qc_data": ("pop-phase", _BLUE),
@@ -104,23 +108,35 @@ class ConsoleTraceCallbackHandler:
         "get_arlog_settlement_evidence": ("  tool   ", _DIM),
     }
 
-    def __init__(self, agent_name: str) -> None:
+    # Sub-agent tool names — show full payloads in verbose mode
+    _AGENT_TOOLS = {"fetch_structured_qc_data", "collect_qc_evidence", "make_qc_decision"}
+
+    def __init__(self, agent_name: str, *, verbose: bool = False) -> None:
         self.agent_name = agent_name
+        self.verbose = verbose
         self._chunks: list[str] = []
 
     def __call__(self, **kwargs: Any) -> None:
-        event = kwargs.get("event", {}) or {}
         data = kwargs.get("data", "")
         complete = kwargs.get("complete", False)
 
-        tool_use = event.get("contentBlockStart", {}).get("start", {}).get("toolUse")
-        if tool_use:
-            name = tool_use.get("name", "?")
-            label, colour = self.TOOL_LABELS.get(name, ("  call   ", _RESET))
+        # current_tool_use is the official Strands kwarg (input is accumulated as streaming occurs)
+        current_tool_use = kwargs.get("current_tool_use") or {}
+        tool_name = current_tool_use.get("name")
+        if tool_name:
+            label, colour = self.TOOL_LABELS.get(tool_name, ("  call   ", _RESET))
             print(
                 f"  {_c(f'[{label}]', colour, _BOLD)}"
-                f"  {_c(self.agent_name, _DIM)} → {_c(name, _BOLD)}"
+                f"  {_c(self.agent_name, _DIM)} → {_c(tool_name, _BOLD)}"
             )
+            if self.verbose and tool_name in self._AGENT_TOOLS:
+                payload = current_tool_use.get("input") or {}
+                if payload:
+                    pretty = json.dumps(payload, indent=4, default=str)
+                    print(_c("    ── REQUEST PAYLOAD ──────────────────────────────────────", _DIM))
+                    for line in pretty.splitlines():
+                        print(f"    {_c(line, _DIM)}")
+                    print(_c("    ─────────────────────────────────────────────────────────", _DIM))
 
         if data:
             self._chunks.append(data)
@@ -156,6 +172,11 @@ class ConsoleTraceCallbackHandler:
                             f"  {_c(self.agent_name, _DIM)}"
                             f"  evidence_bundle  checks={checks}"
                         )
+                    if self.verbose:
+                        print(_c("    ── RESPONSE PAYLOAD ─────────────────────────────────────", _DIM))
+                        for line in json.dumps(parsed, indent=4, default=str).splitlines():
+                            print(f"    {_c(line, _DIM)}")
+                        print(_c("    ─────────────────────────────────────────────────────────", _DIM))
                 except (json.JSONDecodeError, TypeError):
                     pass
             self._chunks.clear()
@@ -163,10 +184,15 @@ class ConsoleTraceCallbackHandler:
 
 # ── Main workflow ─────────────────────────────────────────────────────────────
 
-def demo_workflow() -> dict:
-    """Demonstrate the agent-driven orchestration flow with console tracing."""
+def demo_workflow(*, verbose: bool = False) -> dict:
+    """Demonstrate the agent-driven orchestration flow with console tracing.
+
+    Args:
+        verbose: When True, print full JSON request/response payloads for every
+                 sub-agent call during live execution and in the post-run trace.
+    """
     run_log_path = setup_project_logging()
-    logger.info("demo_workflow_started")
+    logger.info("demo_workflow_started verbose=%s", verbose)
     logger.info("demo_model_mode=local_deterministic")
 
     data_fetcher_agent = build_data_fetcher_agent()
@@ -178,11 +204,19 @@ def demo_workflow() -> dict:
         qc_decision_agent,
     )
 
-    # Swap in the console-trace callback handlers for this run
-    data_fetcher_agent.callback_handler  = ConsoleTraceCallbackHandler("data_fetcher_agent")
-    qc_validation_agent.callback_handler = ConsoleTraceCallbackHandler("qc_validation_agent")
-    qc_decision_agent.callback_handler   = ConsoleTraceCallbackHandler("qc_decision_agent")
-    orchestrator_agent.callback_handler  = ConsoleTraceCallbackHandler("orchestrator_agent")
+    # Use composite handlers so both the live console trace AND the file log
+    # receive every callback event simultaneously.
+    from app.logging_utils import create_agent_callback_handler
+    def _cb(name: str) -> CompositeCallbackHandler:
+        return CompositeCallbackHandler(
+            ConsoleTraceCallbackHandler(name, verbose=verbose),
+            create_agent_callback_handler(name),
+        )
+
+    data_fetcher_agent.callback_handler  = _cb("data_fetcher_agent")
+    qc_validation_agent.callback_handler = _cb("qc_validation_agent")
+    qc_decision_agent.callback_handler   = _cb("qc_decision_agent")
+    orchestrator_agent.callback_handler  = _cb("orchestrator_agent")
 
     sample_procedure = load_schema_json("sample_procedure.json")
     # Pass a compact version to the LLM to stay within token budget.
@@ -249,10 +283,22 @@ def demo_workflow() -> dict:
 
 # ── Post-run pretty trace ─────────────────────────────────────────────────────
 
-def print_flow_trace(result: dict) -> None:
-    """Print a human-readable step-by-step trace of the completed QC flow."""
+def print_flow_trace(result: dict, *, verbose: bool = False) -> None:
+    """Print a human-readable step-by-step trace of the completed QC flow.
+
+    Args:
+        verbose: When True, print the full agent_request (INPUT) sent to each
+                 sub-agent alongside the output, so you can see exactly what was
+                 passed between agents at every step.
+    """
     cr = result.get("checkpoint_result", {})
     outputs: list[dict] = cr.get("outputs", [])
+    interpreted: list[dict] = cr.get("interpreted_steps", [])
+    # Build a step_id → agent_request lookup for verbose input display
+    input_by_step: dict[str, dict] = {
+        s["step_id"]: s.get("agent_request", {})
+        for s in interpreted
+    }
     step_decision: dict = cr.get("step_decision", {})
     final_decision: dict = cr.get("final_decision", {})
 
@@ -271,7 +317,15 @@ def print_flow_trace(result: dict) -> None:
     if pop_outputs:
         _section("PHASE 1 — POPULATION RETRIEVAL")
         for o in pop_outputs:
-            _subsection(f"step {o['step_id']}  ·  agent: {o['agent_called']}")
+            sid = o["step_id"]
+            _subsection(f"step {sid}  ·  agent: {o['agent_called']}")
+            if verbose:
+                req = input_by_step.get(sid, {})
+                if req:
+                    print(_c("    ── INPUT sent to sub-agent ──────────────────────────────", _DIM))
+                    for line in json.dumps(req, indent=4, default=str).splitlines():
+                        print(f"    {_c(line, _DIM)}")
+                    print(_c("    ─────────────────────────────────────────────────────────", _DIM))
             out = _parse_output(o.get("agent_output", {}))
             accounts = out.get("accounts", [])
             _field("accounts_returned", len(accounts))
@@ -302,6 +356,13 @@ def print_flow_trace(result: dict) -> None:
             # ── Evidence step ────────────────────────────────────────────────
             if agent == "collect_qc_evidence":
                 _subsection(f"step {step_id}  ·  evidence collection  ·  account {out.get('account_number', '?')}")
+                if verbose:
+                    req = input_by_step.get(step_id, {})
+                    if req:
+                        print(_c("    ── INPUT sent to sub-agent ──────────────────────────────", _DIM))
+                        for line in json.dumps(req, indent=4, default=str).splitlines():
+                            print(f"    {_c(line, _DIM)}")
+                        print(_c("    ─────────────────────────────────────────────────────────", _DIM))
                 for ev in out.get("evidence", []):
                     check = ev.get("check", "?")
                     print(f"\n    {_c(f'  check: {check}', _BOLD)}")
@@ -330,18 +391,35 @@ def print_flow_trace(result: dict) -> None:
                 dec = out.get("decision", "?")
                 col = _decision_colour(dec)
                 _subsection(f"step {step_id}  ·  step-level decision  ·  account {out.get('account_number', '?')}")
+                if verbose:
+                    req = input_by_step.get(step_id, {})
+                    if req:
+                        print(_c("    ── INPUT sent to sub-agent ──────────────────────────────", _DIM))
+                        for line in json.dumps(req, indent=4, default=str).splitlines():
+                            print(f"    {_c(line, _DIM)}")
+                        print(_c("    ─────────────────────────────────────────────────────────", _DIM))
                 print()
                 print(f"    {_c('DECISION:', _BOLD)}  {_c(dec.upper(), col, _BOLD)}")
                 print()
                 _field("reason",               out.get("reason", ""))
                 _field("used_rule_ids",         out.get("used_rule_ids", []))
                 _field("used_evidence_checks",  out.get("used_evidence_checks", []))
+                _field("rule_outcomes",         out.get("rule_outcomes", {}))
+                if out.get("skipped_rule_ids"):
+                    _field("skipped_rule_ids",  out.get("skipped_rule_ids", []))
 
             # ── Final decision ───────────────────────────────────────────────
             elif agent == "make_qc_decision" and scope == "final_level":
                 dec = out.get("decision", "?")
                 col = _decision_colour(dec)
                 _subsection(f"step {step_id}  ·  final decision  ·  account {out.get('account_number', '?')}")
+                if verbose:
+                    req = input_by_step.get(step_id, {})
+                    if req:
+                        print(_c("    ── INPUT sent to sub-agent ──────────────────────────────", _DIM))
+                        for line in json.dumps(req, indent=4, default=str).splitlines():
+                            print(f"    {_c(line, _DIM)}")
+                        print(_c("    ─────────────────────────────────────────────────────────", _DIM))
                 print()
                 print(f"    {_c('FINAL VERDICT:', _BOLD)}  {_c(dec.upper(), col, _BOLD)}")
                 print()
@@ -360,8 +438,25 @@ def print_flow_trace(result: dict) -> None:
     print(f"  account          : {_c(str(account), _BOLD)}")
     print(f"  step decision    : {_c(s_dec.upper(), s_col, _BOLD)}")
     print(f"  final verdict    : {_c(f_dec.upper(), f_col, _BOLD)}")
-    print(f"  rules applied    : {step_decision.get('used_rule_ids', [])}")
-    print(f"  evidence checks  : {step_decision.get('used_evidence_checks', [])}")
+    # Aggregate rules and evidence checks across ALL step-level decisions (not just the last one)
+    def _unique_ordered(lst: list) -> list:
+        seen: set = set()
+        return [x for x in lst if x is not None and not (x in seen or seen.add(x))]
+
+    _all_rule_ids: list = []
+    _all_ev_checks: list = []
+    _all_skipped: list = []
+    for _o in outputs:
+        if _o.get("agent_called") == "make_qc_decision":
+            _out = _parse_output(_o.get("agent_output", {}))
+            if _out.get("decision_scope") == "step_level":
+                _all_rule_ids.extend(_out.get("used_rule_ids", []))
+                _all_ev_checks.extend(_out.get("used_evidence_checks", []))
+                _all_skipped.extend(_out.get("skipped_rule_ids", []))
+    print(f"  rules applied    : {_unique_ordered(_all_rule_ids)}")
+    if _all_skipped:
+        print(f"  rules skipped    : {_unique_ordered(_all_skipped)}")
+    print(f"  evidence checks  : {_unique_ordered(_all_ev_checks)}")
     print()
     _field("step reason",  step_decision.get("reason", ""))
     _field("final reason", final_decision.get("reason", ""))
@@ -507,8 +602,11 @@ def run_local_sequential_demo() -> dict:
     print(f"    {_c('DECISION:', _BOLD)}  {_c(dec_2b.upper(), _decision_colour(dec_2b), _BOLD)}")
     _field("reason",        arlog_decision.get("reason", ""))
     _field("used_rule_ids", arlog_decision.get("used_rule_ids", []))
-    skipped_note = "rule_arlog_comment skipped — direct AR evidence present" if found else "(no rules skipped)"
-    _field("fallback_status", _c(skipped_note, _DIM))
+    skipped = arlog_decision.get("skipped_rule_ids", [])
+    skipped_note = f"skipped: {skipped}" if skipped else "(no rules skipped)"
+    _field("fallback_status",   _c(skipped_note, _DIM))
+    _field("tag rule_outcomes", tag_decision.get("rule_outcomes", {}))
+    _field("ar  rule_outcomes", arlog_decision.get("rule_outcomes", {}))
 
     _subsection("acct-3  ·  final verdict  (rule_final_aggregation)")
     print(f"    {_c('FINAL VERDICT:', _BOLD)}  {_c(dec_3.upper(), _decision_colour(dec_3), _BOLD)}")
@@ -536,6 +634,161 @@ def run_local_sequential_demo() -> dict:
     }
 
 
+# ── Multi-account validation test ─────────────────────────────────────────────
+
+_TEST_ACCOUNTS = [
+    {"account_number": "100001", "settlement_flag": "Y", "borrower": "Alex Johnson",  "expected_final": "pass"},
+    {"account_number": "100010", "settlement_flag": "N", "borrower": "Hayden Flores", "expected_final": "fail"},
+    {"account_number": "100004", "settlement_flag": "Y", "borrower": "Riley Cooper",  "expected_final": "manual_review"},
+    {"account_number": "100005", "settlement_flag": "Y", "borrower": "Avery Patel",   "expected_final": "manual_review"},
+]
+
+
+def run_multi_account_test() -> list[dict]:
+    """Run the 6-step deterministic QC flow over 4 targeted test accounts.
+
+    Validates all meaningful outcome paths without the LLM orchestrator:
+        100001  flag=Y  SIF tag + direct AR evidence          → PASS
+        100010  flag=N  SIF tag + ambiguous AR comment        → FAIL
+        100004  flag=Y  no SIF tag + comment-only AR evidence → MANUAL_REVIEW
+        100005  flag=Y  SIF tag + no direct AR rows           → MANUAL_REVIEW (via step insufficient_evidence)
+    """
+    run_log_path = setup_project_logging("multi_account_test")
+    logger.info("multi_account_test_started accounts=%d", len(_TEST_ACCOUNTS))
+
+    sample_procedure = load_schema_json("sample_procedure.json")
+    evaluation_rules = sample_procedure.get("evaluation_rules", [])
+    rules_by_id = {r["rule_id"]: r for r in evaluation_rules}
+
+    def _rules(ids: list[str]) -> list[dict]:
+        return [rules_by_id[i] for i in ids if i in rules_by_id]
+
+    _section("MULTI-ACCOUNT VALIDATION TEST")
+    print(f"  Testing {len(_TEST_ACCOUNTS)} accounts  ·  deterministic rule chain  ·  no LLM orchestrator")
+    print()
+    print(_c("  Step trace:", _DIM))
+    print(_hr())
+
+    results = []
+    for acct in _TEST_ACCOUNTS:
+        account_number = acct["account_number"]
+        settlement_flag = acct["settlement_flag"]
+        expected_final = acct["expected_final"]
+        account_context = {"account_number": account_number, "settlement_flag": settlement_flag}
+
+        tag_evidence = get_account_tag_sif_presence(account_number=account_number)
+        tag_bundle = {
+            "account_number": account_number,
+            "evidence_count": 1,
+            "evidence_checks": [tag_evidence.get("check")],
+            "evidence": [tag_evidence],
+        }
+        tag_decision = run_qc_decision_agent_wrapper({
+            "decision_mode": "step_decision",
+            "step_id": "acct-1b",
+            "step_title": "Evaluate SIF tag evidence",
+            "account_context": account_context,
+            "evidence_bundle": tag_bundle,
+            "evaluation_rules": _rules(["rule_sif_tag"]),
+        })
+
+        arlog_evidence = get_arlog_settlement_evidence(account_number=account_number)
+        arlog_bundle = {
+            "account_number": account_number,
+            "evidence_count": 1,
+            "evidence_checks": [arlog_evidence.get("check")],
+            "evidence": [arlog_evidence],
+        }
+        arlog_decision = run_qc_decision_agent_wrapper({
+            "decision_mode": "step_decision",
+            "step_id": "acct-2b",
+            "step_title": "Evaluate AR log settlement evidence",
+            "account_context": account_context,
+            "evidence_bundle": arlog_bundle,
+            "evaluation_rules": _rules(["rule_arlog_direct", "rule_arlog_comment"]),
+        })
+
+        final = run_qc_decision_agent_wrapper({
+            "decision_mode": "final_decision",
+            "final_step_id": "acct-3",
+            "account_context": account_context,
+            "step_decisions": [tag_decision, arlog_decision],
+            "evaluation_rules": _rules(["rule_final_aggregation"]),
+        })
+
+        final_dec = final.get("decision", "?")
+        matched = final_dec == expected_final
+        results.append({
+            "account_number": account_number,
+            "settlement_flag": settlement_flag,
+            "borrower": acct["borrower"],
+            "expected_final": expected_final,
+            "tag_decision": tag_decision,
+            "arlog_decision": arlog_decision,
+            "final_decision": final,
+            "matched": matched,
+        })
+
+        tag_dec = tag_decision.get("decision", "?")
+        ar_dec = arlog_decision.get("decision", "?")
+        ar_skipped = arlog_decision.get("skipped_rule_ids", [])
+        flag_col = _GREEN if settlement_flag == "Y" else _RED
+        skipped_note = f"  {_c(f'[skipped: {ar_skipped}]', _DIM)}" if ar_skipped else ""
+        print(
+            f"  {_c(account_number, _BOLD)}"
+            f"  flag={_c(settlement_flag, flag_col, _BOLD)}"
+            f"  {acct['borrower']:<20}"
+            f"  1b={_c(tag_dec.upper(), _decision_colour(tag_dec), _BOLD)}"
+            f"  2b={_c(ar_dec.upper(), _decision_colour(ar_dec), _BOLD)}"
+            f"{skipped_note}"
+            f"  final={_c(final_dec.upper(), _decision_colour(final_dec), _BOLD)}"
+            f"  expect={_c(expected_final.upper(), _decision_colour(expected_final))}"
+            f"  {_c('OK', _GREEN, _BOLD) if matched else _c('MISMATCH', _RED, _BOLD)}"
+        )
+
+    print()
+    all_pass = all(r["matched"] for r in results)
+    n_ok = sum(1 for r in results if r["matched"])
+    overall = (
+        _c(f"ALL {n_ok}/{len(results)} TESTS PASSED", _GREEN, _BOLD)
+        if all_pass
+        else _c(f"{n_ok}/{len(results)} PASSED — {len(results)-n_ok} MISMATCH(ES)", _RED, _BOLD)
+    )
+    print(f"  Result: {overall}")
+
+    # ── Per-account rule outcome detail ───────────────────────────────────────
+    _section("TEST RESULTS — RULE OUTCOMES PER ACCOUNT")
+    for r in results:
+        acct_num = r["account_number"]
+        s_flag = r["settlement_flag"]
+        f_dec = r["final_decision"].get("decision", "?")
+        flag_col = _GREEN if s_flag == "Y" else _RED
+        matched = r["matched"]
+        _subsection(
+            f"{acct_num}  flag={_c(s_flag, flag_col, _BOLD)}"
+            f"  borrower={r['borrower']}"
+            f"  final={_c(f_dec.upper(), _decision_colour(f_dec), _BOLD)}"
+            f"  expected={_c(r['expected_final'].upper(), _decision_colour(r['expected_final']))}"
+            f"  {_c('OK', _GREEN, _BOLD) if matched else _c('MISMATCH', _RED, _BOLD)}"
+        )
+        _field("tag rule_outcomes",   r["tag_decision"].get("rule_outcomes", {}))
+        _field("arlog rule_outcomes", r["arlog_decision"].get("rule_outcomes", {}))
+        skipped = r["arlog_decision"].get("skipped_rule_ids", [])
+        if skipped:
+            _field("arlog skipped_rules", skipped)
+
+    print()
+    print(f"  log file  → {_c(str(run_log_path), _DIM)}")
+    print()
+    print(_hr())
+    logger.info(
+        "multi_account_test_completed all_pass=%s results=%s",
+        all_pass,
+        [{r["account_number"]: r["final_decision"].get("decision")} for r in results],
+    )
+    return results
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -544,13 +797,22 @@ def main() -> None:
     Usage:
       python -m app.main            # orchestrated (LLM orchestrator, default)
       python -m app.main local      # local sequential (direct tool chain, no orchestrator)
+      python -m app.main test       # multi-account test (4 accounts, all outcome paths)
+      python -m app.main -v         # orchestrated + verbose I/O (full agent payloads)
+      python -m app.main local -v   # local sequential (verbose flag is ignored for local mode)
     """
-    mode = sys.argv[1] if len(sys.argv) > 1 else "orchestrated"
+    args = sys.argv[1:]
+    verbose = "-v" in args or "--verbose" in args
+    mode_args = [a for a in args if a not in ("-v", "--verbose")]
+    mode = mode_args[0] if mode_args else "orchestrated"
+
     if mode == "local":
         run_local_sequential_demo()
+    elif mode == "test":
+        run_multi_account_test()
     else:
-        result = demo_workflow()
-        print_flow_trace(result)
+        result = demo_workflow(verbose=verbose)
+        print_flow_trace(result, verbose=verbose)
 
 
 if __name__ == "__main__":
