@@ -6,6 +6,8 @@ import json
 import logging
 import sys
 import textwrap
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from app.config import (
@@ -88,6 +90,18 @@ def _wrap(text: str, indent: int = 6, width: int = 68) -> None:
     pad = " " * indent
     for line in textwrap.wrap(str(text), width=width):
         print(f"{pad}{line}")
+
+
+# ── JSONL persistence ─────────────────────────────────────────────────────────
+
+def _persist_account_result(jsonl_path: Path, record: dict) -> None:
+    """Append one account result as a JSON line to *jsonl_path* (create if needed).
+
+    Each call is a single atomic write so partial-batch files remain valid even
+    if the run is interrupted mid-batch.
+    """
+    with jsonl_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, default=str) + "\n")
 
 
 # ── Live trace callback ───────────────────────────────────────────────────────
@@ -195,6 +209,8 @@ def demo_workflow(*, verbose: bool = False) -> dict:
     logger.info("demo_workflow_started verbose=%s", verbose)
     logger.info("demo_model_mode=local_deterministic")
 
+    jsonl_path = run_log_path.with_suffix(".jsonl")
+
     data_fetcher_agent = build_data_fetcher_agent()
     qc_validation_agent = build_qc_validation_agent()
     qc_decision_agent = build_qc_decision_agent()
@@ -262,9 +278,29 @@ def demo_workflow(*, verbose: bool = False) -> dict:
         final_dec.get("decision") if isinstance(final_dec, dict) else final_dec,
     )
 
+    # Persist per-account result immediately after the orchestrator completes.
+    # The orchestrator currently processes one account per run; build the record
+    # from checkpoint_result so all three run modes share the same JSONL schema.
+    _current_account = checkpoint_result.get("current_account") or {}
+    _step_dec = checkpoint_result.get("step_decision") or {}
+    _final_dec_obj = checkpoint_result.get("final_decision") or {}
+    _persist_account_result(jsonl_path, {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "run_mode": "orchestrated",
+        "procedure_name": checkpoint_result.get("procedure_name"),
+        "batch_id": checkpoint_result.get("batch_id"),
+        "account_number": _current_account.get("account_number") if isinstance(_current_account, dict) else str(_current_account),
+        "settlement_flag": _current_account.get("settlement_flag") if isinstance(_current_account, dict) else None,
+        "final_decision": _final_dec_obj.get("decision") if isinstance(_final_dec_obj, dict) else None,
+        "step_decision": _step_dec.get("decision") if isinstance(_step_dec, dict) else None,
+        "rule_outcomes": _step_dec.get("rule_outcomes", {}) if isinstance(_step_dec, dict) else {},
+        "status": checkpoint_result.get("status"),
+    })
+
     return {
         "demo_request": demo_task["task_request"],
         "log_file": str(run_log_path),
+        "jsonl_file": str(jsonl_path),
         "agents": {
             "orchestrator": orchestrator_agent.name,
             "data_fetcher": data_fetcher_agent.name,
@@ -462,6 +498,8 @@ def print_flow_trace(result: dict, *, verbose: bool = False) -> None:
     _field("final reason", final_decision.get("reason", ""))
     print()
     print(f"  log file  → {_c(result.get('log_file', '?'), _DIM)}")
+    if result.get("jsonl_file"):
+        print(f"  results   → {_c(result['jsonl_file'], _DIM)}")
     print()
     print(_hr())
 
@@ -481,6 +519,8 @@ def run_local_sequential_demo() -> dict:
     """
     run_log_path = setup_project_logging("local_sequential_demo")
     logger.info("local_sequential_demo_started")
+
+    jsonl_path = run_log_path.with_suffix(".jsonl")
 
     sample_procedure = load_schema_json("sample_procedure.json")
     evaluation_rules = sample_procedure.get("evaluation_rules", [])
@@ -618,6 +658,26 @@ def run_local_sequential_demo() -> dict:
     print(f"  log file  → {_c(str(run_log_path), _DIM)}")
     print()
 
+    _persist_account_result(jsonl_path, {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "run_mode": "local",
+        "account_number": account_number,
+        "settlement_flag": settlement_flag,
+        "borrower": account_data.get("borrower", ""),
+        "final_decision": dec_3,
+        "step_decisions": {
+            "tag": dec_1b,
+            "arlog": dec_2b,
+        },
+        "rule_outcomes": {
+            "tag": tag_decision.get("rule_outcomes", {}),
+            "arlog": arlog_decision.get("rule_outcomes", {}),
+        },
+        "skipped_rule_ids": arlog_decision.get("skipped_rule_ids", []),
+    })
+    print(f"  results   → {_c(str(jsonl_path), _DIM)}")
+    print()
+
     logger.info(
         "local_sequential_demo_completed account=%s tag_dec=%s arlog_dec=%s final_dec=%s",
         account_number, dec_1b, dec_2b, dec_3,
@@ -631,6 +691,7 @@ def run_local_sequential_demo() -> dict:
         "arlog_decision": arlog_decision,
         "final_decision": final_decision,
         "log_file": str(run_log_path),
+        "jsonl_file": str(jsonl_path),
     }
 
 
@@ -655,6 +716,8 @@ def run_multi_account_test() -> list[dict]:
     """
     run_log_path = setup_project_logging("multi_account_test")
     logger.info("multi_account_test_started accounts=%d", len(_TEST_ACCOUNTS))
+
+    jsonl_path = run_log_path.with_suffix(".jsonl")
 
     sample_procedure = load_schema_json("sample_procedure.json")
     evaluation_rules = sample_procedure.get("evaluation_rules", [])
@@ -729,6 +792,26 @@ def run_multi_account_test() -> list[dict]:
             "matched": matched,
         })
 
+        _persist_account_result(jsonl_path, {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "run_mode": "test",
+            "account_number": account_number,
+            "settlement_flag": settlement_flag,
+            "borrower": acct["borrower"],
+            "expected_final": expected_final,
+            "final_decision": final.get("decision"),
+            "step_decisions": {
+                "tag": tag_decision.get("decision"),
+                "arlog": arlog_decision.get("decision"),
+            },
+            "rule_outcomes": {
+                "tag": tag_decision.get("rule_outcomes", {}),
+                "arlog": arlog_decision.get("rule_outcomes", {}),
+            },
+            "skipped_rule_ids": arlog_decision.get("skipped_rule_ids", []),
+            "matched": matched,
+        })
+
         tag_dec = tag_decision.get("decision", "?")
         ar_dec = arlog_decision.get("decision", "?")
         ar_skipped = arlog_decision.get("skipped_rule_ids", [])
@@ -779,6 +862,7 @@ def run_multi_account_test() -> list[dict]:
 
     print()
     print(f"  log file  → {_c(str(run_log_path), _DIM)}")
+    print(f"  results   → {_c(str(jsonl_path), _DIM)}")
     print()
     print(_hr())
     logger.info(
