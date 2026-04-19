@@ -1,6 +1,6 @@
 {
   "qc_name": "settlement_review_qc",
-  "procedure_name": "Settlement Review Procedure v1",
+  "procedure_name": "Internal Recovery Potential Settlements",
   "description": "Validates whether accounts flagged in the population as settled in full (SIF) have sufficient corroborating evidence in account tags and AR activity logs. Produces a step-level evidence decision and a final account-level QC verdict.",
   "unit_of_work": "account",
   "orchestration_mode": "dynamic",
