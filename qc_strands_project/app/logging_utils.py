@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -9,7 +10,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from strands.hooks import (
+    AfterModelCallEvent,
+    AfterToolCallEvent,
+    BeforeInvocationEvent,
+    HookProvider,
+    HookRegistry,
+)
+
 from app.config import LOGS_DIR
+
+logger = logging.getLogger("qc_strands.hooks")
 
 
 def _compact_value(value: Any, *, max_length: int = 1200) -> str:
@@ -81,6 +92,159 @@ def create_agent_callback_handler(agent_name: str) -> AgentFileCallbackHandler:
 # Re-export the SDK's built-in CompositeCallbackHandler so callers can import
 # it from this module without knowing the SDK path.
 from strands.handlers.callback_handler import CompositeCallbackHandler  # noqa: E402
+
+
+# ── Strands Hook providers ────────────────────────────────────────────────────
+
+# Required fields that must be present in a valid sub-agent response, keyed by
+# the tool name used to call that sub-agent.
+_REQUIRED_FIELDS: dict[str, list[str]] = {
+    "collect_qc_evidence": ["account_number", "evidence"],
+    "make_qc_decision":    ["decision_scope", "decision"],
+    "fetch_structured_qc_data": ["accounts"],
+}
+
+
+class SubAgentResponseValidationHook(HookProvider):
+    """Validate sub-agent JSON responses after every tool call on the orchestrator.
+
+    Fires on ``AfterToolCallEvent`` for the three orchestrator sub-agent tools:
+    ``collect_qc_evidence``, ``make_qc_decision``, and ``fetch_structured_qc_data``.
+
+    For each call:
+    - Parses the returned content as JSON.
+    - Checks that all required fields for that tool are present.
+    - If the response is malformed or missing required fields, marks the result
+      as ``"error"`` so the LLM receives a clear error message rather than
+      silently processing a broken payload.
+    - If ``attempt <= max_retries``, sets ``event.retry = True`` so the SDK
+      re-invokes the sub-agent automatically (same ``tool_use_id``).
+
+    Max retries defaults to 2.  Attempt counts are tracked per ``tool_use_id``
+    and cleaned up on success to avoid unbounded memory growth.
+    """
+
+    def __init__(self, max_retries: int = 2) -> None:
+        self.max_retries = max_retries
+        self._attempt_counts: dict[str, int] = {}
+
+    def register_hooks(self, registry: HookRegistry) -> None:
+        registry.add_callback(AfterToolCallEvent, self.validate_and_retry)
+
+    def validate_and_retry(self, event: AfterToolCallEvent) -> None:
+        tool_name = event.tool_use.get("name", "")
+        required = _REQUIRED_FIELDS.get(tool_name)
+        if not required:
+            return  # not a sub-agent call we validate
+
+        tool_use_id = str(event.tool_use.get("toolUseId", tool_name))
+        attempt = self._attempt_counts.get(tool_use_id, 0) + 1
+        self._attempt_counts[tool_use_id] = attempt
+
+        # If the tool already returned an SDK-level error, let retry handle it
+        if event.result.get("status") == "error":
+            if attempt <= self.max_retries:
+                logger.warning(
+                    "sub_agent_tool_error tool=%s attempt=%d/%d — retrying",
+                    tool_name, attempt, self.max_retries,
+                )
+                event.retry = True
+            else:
+                logger.error(
+                    "sub_agent_tool_error tool=%s attempt=%d — max retries exhausted",
+                    tool_name, attempt,
+                )
+            return
+
+        # Parse the response content
+        content_text: str = ""
+        try:
+            content_text = event.result["content"][0]["text"]
+            parsed = json.loads(content_text)
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+            error_msg = f"sub-agent '{tool_name}' returned malformed JSON: {exc}"
+            logger.warning(
+                "sub_agent_malformed_json tool=%s attempt=%d/%d content=%r error=%s",
+                tool_name, attempt, self.max_retries, content_text[:200], exc,
+            )
+            event.result["status"] = "error"
+            event.result["content"][0]["text"] = f"Error: {error_msg}"
+            if attempt <= self.max_retries:
+                event.retry = True
+            return
+
+        # Check required fields
+        missing = [f for f in required if f not in parsed]
+        if missing:
+            error_msg = f"sub-agent '{tool_name}' response missing required fields: {missing}"
+            logger.warning(
+                "sub_agent_missing_fields tool=%s attempt=%d/%d missing=%s",
+                tool_name, attempt, self.max_retries, missing,
+            )
+            event.result["status"] = "error"
+            event.result["content"][0]["text"] = f"Error: {error_msg}"
+            if attempt <= self.max_retries:
+                event.retry = True
+            return
+
+        # Valid response — clean up tracking
+        self._attempt_counts.pop(tool_use_id, None)
+        logger.info(
+            "sub_agent_response_valid tool=%s attempt=%d fields_ok=%s",
+            tool_name, attempt, required,
+        )
+
+
+class ModelCallRetryHook(HookProvider):
+    """Retry transient LLM API errors with exponential backoff.
+
+    Fires on ``AfterModelCallEvent``. If ``event.exception`` is set (e.g. a
+    transient ``ServiceUnavailable`` or rate-limit error from the model
+    provider), sets ``event.retry = True`` and waits ``2^attempt`` seconds
+    before the SDK re-invokes the model.
+
+    Retry count is reset on each new agent invocation (``BeforeInvocationEvent``)
+    so the limit applies per-call, not per agent lifetime.
+
+    Max retries defaults to 3.
+    """
+
+    def __init__(self, max_retries: int = 3) -> None:
+        self.max_retries = max_retries
+        self._retry_count: int = 0
+
+    def register_hooks(self, registry: HookRegistry) -> None:
+        registry.add_callback(BeforeInvocationEvent, self._reset)
+        registry.add_callback(AfterModelCallEvent, self._handle_retry)
+
+    def _reset(self, event: BeforeInvocationEvent) -> None:  # noqa: ARG002
+        self._retry_count = 0
+
+    async def _handle_retry(self, event: AfterModelCallEvent) -> None:
+        if event.exception is None:
+            self._retry_count = 0
+            return
+
+        exc_str = str(event.exception)
+        transient_signals = ("ServiceUnavailable", "rate limit", "429", "503", "timeout", "Timeout")
+        is_transient = any(sig.lower() in exc_str.lower() for sig in transient_signals)
+
+        if is_transient and self._retry_count < self.max_retries:
+            self._retry_count += 1
+            delay = 2 ** self._retry_count
+            logger.warning(
+                "model_call_transient_error attempt=%d/%d delay=%ds error=%s",
+                self._retry_count, self.max_retries, delay, exc_str[:200],
+            )
+            await asyncio.sleep(delay)
+            event.retry = True
+        else:
+            logger.error(
+                "model_call_error attempt=%d error=%s — %s",
+                self._retry_count,
+                exc_str[:200],
+                "max retries exhausted" if self._retry_count >= self.max_retries else "non-transient",
+            )
 
 
 def setup_project_logging(run_name: str = "demo_flow") -> Path:

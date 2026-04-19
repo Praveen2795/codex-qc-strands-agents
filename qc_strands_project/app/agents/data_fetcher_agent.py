@@ -8,7 +8,7 @@ from typing import Any
 from strands import Agent
 
 from app.config import load_prompt
-from app.logging_utils import create_agent_callback_handler
+from app.logging_utils import ModelCallRetryHook, create_agent_callback_handler
 from app.models.factory import build_default_agent_model
 from app.tools.population_tools import get_population_batch
 
@@ -38,4 +38,5 @@ def build_data_fetcher_agent(
         system_prompt=system_prompt or load_prompt("data_fetcher_prompt.txt"),
         tools=tools or [get_population_batch],
         callback_handler=create_agent_callback_handler("data_fetcher_agent"),
+        hooks=[ModelCallRetryHook(max_retries=3)],
     )

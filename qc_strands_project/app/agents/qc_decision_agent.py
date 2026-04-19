@@ -18,7 +18,7 @@ from typing import Any
 from strands import Agent
 
 from app.config import load_prompt
-from app.logging_utils import create_agent_callback_handler
+from app.logging_utils import ModelCallRetryHook, create_agent_callback_handler
 from app.models.factory import build_default_agent_model
 
 logger = logging.getLogger("qc_strands.agents.qc_decision")
@@ -59,6 +59,7 @@ def build_qc_decision_agent(
         system_prompt=system_prompt or load_prompt("qc_decision_prompt.txt"),
         tools=effective_tools,
         callback_handler=create_agent_callback_handler("qc_decision_agent"),
+        hooks=[ModelCallRetryHook(max_retries=3)],
     )
 
 

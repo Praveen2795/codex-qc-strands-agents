@@ -8,7 +8,7 @@ from typing import Any
 from strands import Agent
 
 from app.config import load_prompt
-from app.logging_utils import create_agent_callback_handler
+from app.logging_utils import ModelCallRetryHook, SubAgentResponseValidationHook, create_agent_callback_handler
 from app.models.factory import build_default_agent_model
 
 logger = logging.getLogger("qc_strands.agents.orchestrator")
@@ -64,4 +64,8 @@ def build_orchestrator_agent(
         system_prompt=system_prompt or load_prompt("orchestrator_prompt.txt"),
         tools=orchestrator_tools,
         callback_handler=create_agent_callback_handler("orchestrator_agent"),
+        hooks=[
+            SubAgentResponseValidationHook(max_retries=2),
+            ModelCallRetryHook(max_retries=3),
+        ],
     )

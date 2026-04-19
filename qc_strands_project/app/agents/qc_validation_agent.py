@@ -8,7 +8,7 @@ from typing import Any
 from strands import Agent
 
 from app.config import load_prompt
-from app.logging_utils import create_agent_callback_handler
+from app.logging_utils import ModelCallRetryHook, create_agent_callback_handler
 from app.models.factory import build_default_agent_model
 from app.tools.arlog_tools import get_arlog_settlement_evidence
 from app.tools.tag_tools import get_account_tag_sif_presence
@@ -42,4 +42,5 @@ def build_qc_validation_agent(
         system_prompt=system_prompt or load_prompt("qc_validation_prompt.txt"),
         tools=tools or [get_account_tag_sif_presence, get_arlog_settlement_evidence],
         callback_handler=create_agent_callback_handler("qc_validation_agent"),
+        hooks=[ModelCallRetryHook(max_retries=3)],
     )
