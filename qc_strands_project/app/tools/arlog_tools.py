@@ -35,21 +35,26 @@ def get_arlog_settlement_evidence(account_number: str) -> dict:
     matching_settled_rows = [
         {
             "timestamp": row["timestamp"],
+            "action_code": row.get("action_code"),
+            "result_code": row.get("result_code"),
             "message": row["message"],
         }
         for row in account_rows
-        if "settled in full" in (row.get("message") or "").lower()
+        if "settled in full" in (row.get("action_code") or "").lower()
+        or "settled in full" in (row.get("result_code") or "").lower()
     ]
 
-    latest_comment = None
-    timestamped_rows = [row for row in account_rows if row.get("timestamp")]
-    if timestamped_rows:
-        latest_comment = max(timestamped_rows, key=lambda row: row["timestamp"])
+    comment_rows = [
+        row for row in account_rows
+        if (row.get("action_code") or "").upper() == "COMMENT"
+        or (row.get("result_code") or "").upper() == "COMMENT"
+    ]
+    latest_comment = max(comment_rows, key=lambda r: r["timestamp"]) if comment_rows else None
 
     evidence = {
         "settled_in_full_found": bool(matching_settled_rows),
-        "comment_check_performed": not matching_settled_rows,
-        "comment_row_found": bool(latest_comment) and not matching_settled_rows,
+        "comment_check_performed": not bool(matching_settled_rows),
+        "comment_row_found": bool(comment_rows) and not bool(matching_settled_rows),
         "latest_comment_timestamp": None if matching_settled_rows or latest_comment is None else latest_comment["timestamp"],
         "latest_comment_message": None if matching_settled_rows or latest_comment is None else latest_comment.get("message"),
         "matching_settled_in_full_rows_count": len(matching_settled_rows),
