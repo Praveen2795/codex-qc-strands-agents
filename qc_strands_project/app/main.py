@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from app.config import (
-    compact_procedure_for_llm,
     load_schema_json,
     normalize_agent_tool_output,
     parse_json_response_text,
@@ -251,16 +250,13 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
     orchestrator_agent.callback_handler  = _cb("orchestrator_agent")
 
     sample_procedure = load_schema_json("sample_procedure.json")
-    # Pass a compact version to the LLM to stay within token budget.
-    # The full procedure is kept in memory only for the post-run trace.
-    procedure_for_llm = compact_procedure_for_llm(sample_procedure)
     # procedure_name and batch_id are administrative metadata — not needed for
     # QC reasoning. Kept in Python only; never sent to the LLM.
     _procedure_name = sample_procedure["procedure_name"]
     _batch_id = "batch-001"
     demo_task: dict[str, object] = {
         "qc_name": sample_procedure["qc_name"],
-        "procedure_document": procedure_for_llm,
+        "procedure_document": sample_procedure,
         "task_request": "Run settlement QC for February 2026",
         "start_date": "2026-02-01",
         "end_date": "2026-02-28",
