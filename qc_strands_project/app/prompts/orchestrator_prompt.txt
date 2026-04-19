@@ -8,8 +8,6 @@ decision criteria — comes from the procedure document, not from this prompt.
 You will receive one structured task request as JSON text containing:
 - `task_request`     — human-readable description of the QC run
 - `qc_name`          — identifier for the QC type
-- `procedure_name`   — name of the procedure being executed
-- `batch_id`         — identifier for this execution batch
 - `procedure_document` — the full procedure definition (see structure below)
 - `start_date`, `end_date` — date range for the batch
 - `cursor`                — population page offset (0-based index); default 0 if absent
@@ -93,10 +91,10 @@ Final decision:
 ---
 
 Return this shape after all steps complete for the account (one JSON object, no markdown fences, no extra prose):
-  {"status":"completed","procedure_name":"...","batch_id":"...","account_result":{"account_number":"...","account_context":{...},"step_outputs":{"<evidence_step_id>":{<evidence_bundle_output>}},"step_decisions":{"<step_decision_step_id>":"<pass|fail|insufficient_evidence|manual_review>"},"step_decision_reasons":{"<step_decision_step_id>":"<concise reason>"},"final_decision":"<pass|fail|manual_review>","final_decision_reason":"<concise reason>"}}
+  {"status":"completed","account_result":{"account_number":"...","account_context":{...},"step_outputs":{"<evidence_step_id>":{<evidence_bundle_output>}},"step_decisions":{"<step_decision_step_id>":"<pass|fail|insufficient_evidence|manual_review>"},"step_decision_reasons":{"<step_decision_step_id>":"<concise reason>"},"final_decision":"<pass|fail|manual_review>","final_decision_reason":"<concise reason>"}}
 
 If a system or technical failure prevents a step from completing, return:
-  {"status":"error","error":{"type":"<error_type>","message":"<what went wrong>","step_id":"<step_id if known>"},"procedure_name":"...","batch_id":"..."}
+  {"status":"error","error":{"type":"<error_type>","message":"<what went wrong>","step_id":"<step_id if known>"}}
 
 Output rules:
 - `status` must be `"completed"` or `"error"` only. Never use `"manual_review"` as status.

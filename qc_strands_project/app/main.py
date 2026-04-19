@@ -254,10 +254,12 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
     # Pass a compact version to the LLM to stay within token budget.
     # The full procedure is kept in memory only for the post-run trace.
     procedure_for_llm = compact_procedure_for_llm(sample_procedure)
+    # procedure_name and batch_id are administrative metadata — not needed for
+    # QC reasoning. Kept in Python only; never sent to the LLM.
+    _procedure_name = sample_procedure["procedure_name"]
+    _batch_id = "batch-001"
     demo_task: dict[str, object] = {
         "qc_name": sample_procedure["qc_name"],
-        "procedure_name": sample_procedure["procedure_name"],
-        "batch_id": "batch-001",
         "procedure_document": procedure_for_llm,
         "task_request": "Run settlement QC for February 2026",
         "start_date": "2026-02-01",
@@ -266,10 +268,10 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
     }
 
     _section("QC FLOW — LIVE TRACE")
-    print(f"  procedure : {_c(sample_procedure['procedure_name'], _BOLD)}")
+    print(f"  procedure : {_c(_procedure_name, _BOLD)}")
     print(f"  qc_name   : {_c(sample_procedure['qc_name'], _BOLD)}")
     print(f"  request   : {_c(str(demo_task['task_request']), _BOLD)}")
-    print(f"  batch_id  : {_c(str(demo_task['batch_id']), _BOLD)}")
+    print(f"  batch_id  : {_c(_batch_id, _BOLD)}")
     print()
     print(_c("  Tool call trace:", _DIM))
     print(_hr())
@@ -302,8 +304,8 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
     _persist_account_result(jsonl_path, {
         "run_id": run_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "procedure_name": checkpoint_result.get("procedure_name"),
-        "batch_id": checkpoint_result.get("batch_id"),
+        "procedure_name": _procedure_name,
+        "batch_id": _batch_id,
         "account_number": _ar.get("account_number"),
         "borrower_name": _acct_ctx.get("borrower") if isinstance(_acct_ctx, dict) else None,
         "co_borrower_name": _acct_ctx.get("co_borrower") if isinstance(_acct_ctx, dict) else None,
