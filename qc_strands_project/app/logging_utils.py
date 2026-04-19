@@ -156,11 +156,26 @@ class SubAgentResponseValidationHook(HookProvider):
                 "sub_agent_malformed_json tool=%s attempt=%d content=%r error=%s",
                 tool_name, attempt, content_text[:200], exc,
             )
-            # Don't set retry — agent-as-tool retries via event.retry are not supported
-            # and cause "agent is already processing" errors. Let the LLM handle it.
+            # Overwrite the result with a structured error that the orchestrator LLM can read.
+            # This is cleaner than passing garbled text — the LLM gets a clear JSON error
+            # instead of trying to interpret whatever non-JSON the sub-agent emitted.
+            # (event.retry is intentionally NOT set: agent-as-tool retries via that path
+            # cause "agent is already processing" failures with the same tool_use_id.)
+            error_payload = json.dumps({
+                "error": "sub_agent_malformed_response",
+                "tool": tool_name,
+                "detail": str(exc),
+                "hint": "The sub-agent did not return valid JSON. Please retry this tool call.",
+            })
+            try:
+                event.result["content"][0]["text"] = error_payload
+            except (KeyError, IndexError, TypeError):
+                pass  # content structure itself is unexpected — can't inject, log already done
             return
 
-        # Check required fields — warn only, don't override result
+        # Check required fields — log only. The response is valid JSON and the
+        # orchestrator LLM can still use whatever data is present. Replacing the
+        # result with an error payload would discard usable data and break the flow.
         missing = [f for f in required if f not in parsed]
         if missing:
             logger.warning(
