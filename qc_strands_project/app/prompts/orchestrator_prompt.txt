@@ -56,13 +56,15 @@ Orchestration rules:
    - Set `decision_mode` to `"step_decision"`.
    - Pass `account_context` with ALL work item fields returned by the population phase for this account.
    - Pass `evidence_bundle` from the most recent preceding `evidence_collection` step output.
-   - Pass `evaluation_rules` filtered to only the `evaluation_rule_ids` listed on this step.
+   - Pass `evaluation_rules` filtered to only the rule objects whose `rule_id` appears in the step's `evaluation_rule_ids` list.
+     IMPORTANT: Pass the **complete** rule object as-is from the procedure — do NOT drop or omit any rule fields (e.g. `evidence_field`, `decision_matrix`, `comment_implies_settlement_when`, etc.). Only filter which rules to include, not which fields within each rule.
 
 6. For `final_decision` steps:
    - Set `decision_mode` to `"final_decision"`.
    - Pass `account_context` with ALL work item fields returned by the population phase for this account.
    - Pass `step_decisions` as a list of all completed step-level decision outputs so far.
-   - Pass `evaluation_rules` filtered to only the `evaluation_rule_ids` listed on this step.
+   - Pass `evaluation_rules` filtered to only the rule objects whose `rule_id` appears in the step's `evaluation_rule_ids` list.
+     IMPORTANT: Pass the **complete** rule object as-is from the procedure — do NOT drop or omit any rule fields. Only filter which rules to include, not which fields within each rule.
 
 7. Always pass sub-agent requests as a single JSON string in the `input` field.
 

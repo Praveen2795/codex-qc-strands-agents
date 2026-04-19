@@ -102,49 +102,26 @@ Return this exact shape:
 
 ---
 
-## Per-rule decision matrices
+## How to evaluate rules using decision_matrix
 
-Apply these exact decision matrices when evaluating known rule IDs. Do not reason freely when a matrix entry applies.
+Each rule in `evaluation_rules` may contain a `decision_matrix` — an explicit lookup table mapping account context values and evidence values to decisions. When a `decision_matrix` is present, use it exactly. Do not reason freely about the outcome.
 
-### rule_sif_tag  (evidence field: `sif_present`)
-| settlement_flag | sif_present | decision        |
-|-----------------|-------------|-----------------|
-| Y               | true        | pass            |
-| Y               | false       | manual_review   |
-| N               | true        | fail            |
-| N               | false       | pass            |
+**Algorithm — apply for every rule in `evaluation_rules`:**
 
-Key insight: flag=N + sif_present=false → **pass** (account correctly has no SIF tag).
+1. **Check `rule_type`**. If `"conditional_fallback"`, read `fallback_condition` and evaluate it against the evidence bundle:
+   - If the condition says to skip the rule, omit it entirely — it contributes nothing to the step decision.
+   - Otherwise proceed to step 2.
 
-### rule_arlog_direct  (evidence field: `settled_in_full_found`)
-| settlement_flag | settled_in_full_found | decision               |
-|-----------------|-----------------------|------------------------|
-| Y               | true                  | pass                   |
-| Y               | false                 | insufficient_evidence  |
-| N               | true                  | fail                   |
-| N               | false                 | pass                   |
+2. **Look up `evidence_field`** from the rule in the evidence bundle to obtain the evidence value.
 
-CRITICAL: flag=N + settled_in_full_found=false → **pass**.
-The account claims it was NOT settled. No "SETTLED IN FULL" AR log rows were found.
-That is consistent with the flag — there is no contradiction → PASS.
-Do NOT return fail or insufficient_evidence for this case.
+3. **For comment-based evidence** (where `evidence_field` is a free-text field such as `latest_comment_message`): use the rule's `comment_implies_settlement_when` and `comment_does_not_imply_settlement_when` fields to infer whether the comment implies settlement. Map to `"implies_settlement"` or `"does_not_imply_settlement"` before matching the matrix.
 
-### rule_arlog_comment  (evidence field: `latest_comment_message`; conditional fallback — only applies when `settled_in_full_found=false`)
-| settlement_flag | comment implies settlement | decision               |
-|-----------------|----------------------------|------------------------|
-| Y               | true                       | pass                   |
-| Y               | false                      | insufficient_evidence  |
-| N               | true                       | fail                   |
-| N               | false                      | pass                   |
+4. **Match the `decision_matrix`**: find the row where `account_context_field` value in `account_context` matches `account_context_value` AND `evidence_value` matches the evidence value (or inferred value). Use that row's `decision`.
 
-**Determining whether a comment implies settlement:**
-A comment implies settlement ONLY when it positively asserts that the account was settled, paid in full, or fully resolved.
-A comment does NOT imply settlement when:
-- The settlement keyword is negated: "not final settlement", "no settlement activity", "without settlement"
-- The comment is ambiguous or pending: "awaiting final confirmation", "under review", "pending"
-- The comment merely references a settlement-related topic without confirming it: "references payoff review but not final settlement"
+5. **For rules with no `decision_matrix`** (e.g. `rule_final_aggregation`): apply the standard aggregation policy defined in this prompt.
 
-flag=N + comment does NOT imply settlement → **pass** (no contradiction with the N flag).
+6. **Step decision = worst outcome** across all evaluated rules for the step:
+   `fail` > `insufficient_evidence` > `manual_review` > `pass`
 
 ---
 

@@ -115,34 +115,62 @@
     {
       "rule_id": "rule_sif_tag",
       "title": "SIF tag alignment",
-      "description": "The account tag SIF presence must align with settlement_flag. If settlement_flag=Y, sif_present must be true to pass. If settlement_flag=N, sif_present must be false to pass. Any mismatch is a fail or manual_review.",
+      "description": "The account tag SIF presence must align with settlement_flag.",
       "evidence_check": "account_tag_sif_presence",
+      "evidence_field": "sif_present",
       "applies_to_step": "acct-1b",
-      "allowed_decisions": ["pass", "fail", "manual_review"]
+      "allowed_decisions": ["pass", "fail", "manual_review"],
+      "decision_matrix": [
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": true,  "decision": "pass",          "note": "Flag=Y and SIF tag present — consistent"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": false, "decision": "manual_review", "note": "Flag=Y but no SIF tag found — ambiguous, needs human review"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": true,  "decision": "fail",          "note": "Flag=N but SIF tag found — direct contradiction"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": false, "decision": "pass",          "note": "Flag=N and no SIF tag — consistent"}
+      ]
     },
     {
       "rule_id": "rule_arlog_direct",
       "title": "AR log direct settlement record",
-      "description": "If settlement_flag=Y, the AR log must contain at least one row with settled_in_full_found=true to pass. If settlement_flag=N and settled_in_full_found=true, this is a contradiction and must fail.",
+      "description": "If settlement_flag=Y, settled_in_full_found must be true to pass. If settlement_flag=N and settled_in_full_found=true, that is a contradiction.",
       "evidence_check": "arlog_settlement_evidence",
+      "evidence_field": "settled_in_full_found",
       "applies_to_step": "acct-2b",
-      "allowed_decisions": ["pass", "fail", "insufficient_evidence"]
+      "allowed_decisions": ["pass", "fail", "insufficient_evidence"],
+      "decision_matrix": [
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": true,  "decision": "pass",                 "note": "Flag=Y and SIF AR log row found — consistent"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": false, "decision": "insufficient_evidence", "note": "Flag=Y but no SIF AR log row — evidence absent, not a contradiction"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": true,  "decision": "fail",                 "note": "Flag=N but SIF AR log row found — direct contradiction"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": false, "decision": "pass",                 "note": "Flag=N and no SIF AR log row — consistent"}
+      ]
     },
     {
       "rule_id": "rule_arlog_comment",
       "title": "AR log comment secondary check",
-      "description": "When no direct settled_in_full rows exist, the latest AR log comment is reviewed for secondary settlement implication. If settlement_flag=Y and the comment implies settlement, this can support a pass. If settlement_flag=N and the comment implies settlement, this is a soft contradiction.",
+      "description": "When no direct settled_in_full rows exist, the latest AR log comment is reviewed for secondary settlement implication.",
       "evidence_check": "arlog_settlement_evidence",
+      "evidence_field": "latest_comment_message",
       "applies_to_step": "acct-2b",
       "allowed_decisions": ["pass", "fail", "insufficient_evidence", "manual_review"],
       "rule_type": "conditional_fallback",
-      "fallback_condition": "Only applies when settled_in_full_found is false in arlog_settlement_evidence. If settled_in_full_found is true, the AR log check is already satisfied by rule_arlog_direct — skip this rule entirely. A skipped fallback rule does NOT count as insufficient_evidence."
+      "fallback_condition": "Only applies when settled_in_full_found is false in arlog_settlement_evidence. If settled_in_full_found is true, the AR log check is already satisfied by rule_arlog_direct — skip this rule entirely. A skipped fallback rule does NOT count as insufficient_evidence.",
+      "comment_implies_settlement_when": "The comment positively asserts the account was settled, paid in full, or fully resolved.",
+      "comment_does_not_imply_settlement_when": [
+        "The settlement keyword is negated — e.g. 'not final settlement', 'no settlement activity', 'without settlement'",
+        "The comment is ambiguous or pending — e.g. 'awaiting confirmation', 'under review', 'pending'",
+        "The comment merely references a settlement-related topic without confirming it — e.g. 'references payoff review but not final settlement'"
+      ],
+      "decision_matrix": [
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": "implies_settlement",         "decision": "pass",                 "note": "Flag=Y and comment implies settlement — supports the flag"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": "does_not_imply_settlement", "decision": "insufficient_evidence", "note": "Flag=Y but comment does not confirm settlement — insufficient secondary evidence"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": "implies_settlement",         "decision": "fail",                 "note": "Flag=N but comment implies settlement — contradiction"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": "does_not_imply_settlement", "decision": "pass",                 "note": "Flag=N and comment does not imply settlement — consistent"}
+      ]
     },
     {
       "rule_id": "rule_final_aggregation",
       "title": "Final verdict aggregation",
-      "description": "Aggregates step-level decisions for the account. If any required step decision is fail, the final verdict is fail. If any is insufficient_evidence, the final verdict is manual_review. If any is manual_review, the final verdict is manual_review. If all are pass, the final verdict is pass.",
+      "description": "Aggregates step-level decisions into one final account verdict. Apply the aggregation policy defined in the prompt.",
       "evidence_check": null,
+      "evidence_field": null,
       "applies_to_step": "acct-3",
       "allowed_decisions": ["pass", "fail", "manual_review"]
     }
