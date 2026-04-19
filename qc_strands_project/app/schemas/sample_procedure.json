@@ -105,7 +105,7 @@
         "evidence_tools": [],
         "depends_on": ["acct-1b", "acct-2b"],
         "evaluation_rule_ids": ["rule_final_aggregation"],
-        "decision_policy": "any_fail_fails_any_insufficient_manual_review",
+        "decision_policy": "any_fail_fails_any_manual_review_manual_review",
         "orchestration_hint": "Call make_qc_decision with decision_mode=final_decision. Pass account_context, step_decisions=[acct-1b result, acct-2b result], and evaluation_rules for rule_final_aggregation."
       }
     ]
@@ -122,7 +122,7 @@
       "allowed_decisions": ["pass", "fail", "manual_review"],
       "decision_matrix": [
         {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": true,  "decision": "pass",          "note": "Flag=Y and SIF tag present — consistent"},
-        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": false, "decision": "manual_review", "note": "Flag=Y but no SIF tag found — ambiguous, needs human review"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": false, "decision": "fail", "note": "Flag=Y but no SIF tag found — missing expected tag is a QC failure"},
         {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": true,  "decision": "fail",          "note": "Flag=N but SIF tag found — direct contradiction"},
         {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": false, "decision": "pass",          "note": "Flag=N and no SIF tag — consistent"}
       ]
@@ -134,10 +134,10 @@
       "evidence_check": "arlog_settlement_evidence",
       "evidence_field": "settled_in_full_found",
       "applies_to_step": "acct-2b",
-      "allowed_decisions": ["pass", "fail", "insufficient_evidence"],
+      "allowed_decisions": ["pass", "fail"],
       "decision_matrix": [
-        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": true,  "decision": "pass",                 "note": "Flag=Y and SIF AR log row found — consistent"},
-        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": false, "decision": "insufficient_evidence", "note": "Flag=Y but no SIF AR log row — evidence absent, not a contradiction"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": true,  "decision": "pass", "note": "Flag=Y and SIF AR log row found — consistent"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": false, "decision": "fail", "note": "Flag=Y but no SIF AR log row — missing expected evidence is a QC failure"},
         {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": true,  "decision": "fail",                 "note": "Flag=N but SIF AR log row found — direct contradiction"},
         {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": false, "decision": "pass",                 "note": "Flag=N and no SIF AR log row — consistent"}
       ]
@@ -149,9 +149,9 @@
       "evidence_check": "arlog_settlement_evidence",
       "evidence_field": "latest_comment_message",
       "applies_to_step": "acct-2b",
-      "allowed_decisions": ["pass", "fail", "insufficient_evidence", "manual_review"],
+      "allowed_decisions": ["pass", "fail", "manual_review"],
       "rule_type": "conditional_fallback",
-      "fallback_condition": "Only applies when settled_in_full_found is false in arlog_settlement_evidence. If settled_in_full_found is true, the AR log check is already satisfied by rule_arlog_direct — skip this rule entirely. A skipped fallback rule does NOT count as insufficient_evidence.",
+      "fallback_condition": "Only applies when settled_in_full_found is false in arlog_settlement_evidence. If settled_in_full_found is true, the AR log check is already satisfied by rule_arlog_direct — skip this rule entirely. A skipped fallback rule does NOT count as a failure. When latest_comment_message is null (no comment present), treat as does_not_imply_settlement — absence of a comment does not imply settlement.",
       "comment_implies_settlement_when": "The comment positively asserts the account was settled, paid in full, or fully resolved.",
       "comment_does_not_imply_settlement_when": [
         "The settlement keyword is negated — e.g. 'not final settlement', 'no settlement activity', 'without settlement'",
@@ -160,7 +160,7 @@
       ],
       "decision_matrix": [
         {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": "implies_settlement",         "decision": "pass",                 "note": "Flag=Y and comment implies settlement — supports the flag"},
-        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": "does_not_imply_settlement", "decision": "insufficient_evidence", "note": "Flag=Y but comment does not confirm settlement — insufficient secondary evidence"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": "does_not_imply_settlement", "decision": "fail", "note": "Flag=Y but AR log comment does not imply settlement — QC failure"},
         {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": "implies_settlement",         "decision": "fail",                 "note": "Flag=N but comment implies settlement — contradiction"},
         {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": "does_not_imply_settlement", "decision": "pass",                 "note": "Flag=N and comment does not imply settlement — consistent"}
       ]
@@ -182,8 +182,8 @@
     "dynamic_decision_invocation": true,
     "description": "The orchestrator may call the decision agent dynamically whenever sufficient evidence exists for a step. Step decisions are not batched — they are triggered per account as soon as the required depends_on steps are complete. The final decision is triggered after all required step decisions for the account are complete.",
     "step_aggregation_policy": "any_fail_fails",
-    "final_aggregation_policy": "any_fail_fails_any_insufficient_manual_review",
-    "allowed_step_outcomes": ["pass", "fail", "insufficient_evidence", "manual_review"],
+    "final_aggregation_policy": "any_fail_fails_any_manual_review_manual_review",
+    "allowed_step_outcomes": ["pass", "fail", "manual_review", "error"],
     "allowed_final_outcomes": ["pass", "fail", "manual_review"]
   },
 
@@ -193,7 +193,7 @@
       {"field": "account_number",         "type": "string", "description": "The account identifier from the population phase."},
       {"field": "account_context",        "type": "object", "description": "Full account context carried from the population output. Must include all fields from the population step's required_output_fields: account_number, settlement_flag, borrower, co_borrower."},
       {"field": "step_outputs",           "type": "object", "description": "Keyed by step_id. Contains the raw evidence bundle returned by each evidence_collection step."},
-      {"field": "step_decisions",         "type": "object", "description": "Keyed by step_id. Contains the decision string (pass / fail / insufficient_evidence / manual_review) for each step_decision step. Does NOT include the final_decision step."},
+      {"field": "step_decisions",         "type": "object", "description": "Keyed by step_id. Contains the decision string (pass / fail / manual_review / error) for each step_decision step. Does NOT include the final_decision step."},
       {"field": "step_decision_reasons",  "type": "object", "description": "Keyed by step_id. Contains one concise reason string for each step_decision step."},
       {"field": "final_decision",         "type": "string", "description": "Aggregated final verdict from the final_decision step. Allowed values: pass, fail, manual_review."},
       {"field": "final_decision_reason",  "type": "string", "description": "Concise plain-text explanation of the final verdict."}

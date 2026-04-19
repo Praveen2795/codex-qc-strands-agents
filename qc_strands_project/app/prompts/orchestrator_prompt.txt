@@ -93,7 +93,7 @@ Final decision:
 ---
 
 Return this shape after all steps complete for the account (one JSON object, no markdown fences, no extra prose):
-  {"status":"completed","account_result":{"account_number":"...","account_context":{...},"step_outputs":{"<evidence_step_id>":{<evidence_bundle_output>}},"step_decisions":{"<step_decision_step_id>":"<pass|fail|insufficient_evidence|manual_review>"},"step_decision_reasons":{"<step_decision_step_id>":"<concise reason>"},"final_decision":"<pass|fail|manual_review>","final_decision_reason":"<concise reason>"}}
+  {"status":"completed","account_result":{"account_number":"...","account_context":{...},"step_outputs":{"<evidence_step_id>":{<evidence_bundle_output>}},"step_decisions":{"<step_decision_step_id>":"<pass|fail|manual_review|error>"},"step_decision_reasons":{"<step_decision_step_id>":"<concise reason>"},"final_decision":"<pass|fail|manual_review>","final_decision_reason":"<concise reason>"}}
 
 If a system or technical failure prevents a step from completing, return:
   {"status":"error","error":{"type":"<error_type>","message":"<what went wrong>","step_id":"<step_id if known>"}}

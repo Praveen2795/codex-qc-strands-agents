@@ -42,11 +42,25 @@ Example: `rule_arlog_comment` has `"rule_type": "conditional_fallback"` and its 
 
 ---
 
+## Decision philosophy — deterministic, rule-based
+
+QC validates expected system state. It answers: "Does the system state match what the procedure expects?"
+It does NOT answer: "Do we have enough evidence to prove something?"
+
+Core principle:
+- Missing expected evidence IS a QC failure, not ambiguity.
+- Use the decision_matrix as an exact lookup — do not override it with softer outcomes.
+- Return `"manual_review"` only for genuinely ambiguous unstructured data that cannot be resolved
+  deterministically, and only when the procedure does not define a deterministic outcome for that case.
+- Return `"error"` only for tool failures or missing critical inputs due to a system issue.
+
 ## Allowed decisions for step_decision
 - `"pass"` — evidence satisfies all applicable rules
-- `"fail"` — evidence contradicts one or more rules
-- `"insufficient_evidence"` — evidence is missing or incomplete and cannot support a pass or fail
-- `"manual_review"` — evidence is ambiguous and requires human judgment
+- `"fail"` — evidence contradicts one or more rules, OR expected evidence is absent
+- `"manual_review"` — truly ambiguous unstructured data that the procedure does not resolve deterministically (rare)
+- `"error"` — tool failure or missing critical inputs due to a system issue
+
+DO NOT use `"insufficient_evidence"`. Missing expected evidence = `"fail"`.
 
 Return this exact shape:
 ```json
@@ -54,8 +68,8 @@ Return this exact shape:
   "decision_scope": "step_level",
   "step_id": "<step_id from request>",
   "account_number": "<account_number from account_context>",
-  "decision": "<one of: pass, fail, insufficient_evidence, manual_review>",
-  "reason": "<concise plain-text explanation citing specific evidence fields and rules>",
+  "decision": "<one of: pass, fail, manual_review, error>",
+  "reason": "<concise business-readable explanation citing settlement_flag, key evidence fields, and rule name>",
   "used_rule_ids": ["<rule_id_1>", "..."],
   "used_evidence_checks": ["<check_name_1>", "..."]
 }
@@ -77,15 +91,18 @@ Your task:
 - Determine the overall account-level QC verdict.
 
 Aggregation policy (apply in order):
-1. If any step decision is `"fail"` → final verdict is `"fail"`
-2. If any step decision is `"insufficient_evidence"` or is missing → final verdict is `"manual_review"`
+1. If any step decision is `"error"` → final status is `"error"` (system failure, propagate immediately)
+2. If any step decision is `"fail"` → final verdict is `"fail"`
 3. If any step decision is `"manual_review"` → final verdict is `"manual_review"`
 4. If all step decisions are `"pass"` → final verdict is `"pass"`
+
+Do NOT produce `"manual_review"` for missing evidence, missing records, or contradictions across trusted
+sources. Those are `"fail"` at the step level and `"fail"` at the final level.
 
 Allowed decisions for final_decision:
 - `"pass"`
 - `"fail"`
-- `"manual_review"`
+- `"manual_review"` (rare — only if a step used manual_review for a genuinely ambiguous edge case)
 
 Return this exact shape:
 ```json
@@ -121,7 +138,7 @@ Each rule in `evaluation_rules` may contain a `decision_matrix` — an explicit 
 5. **For rules with no `decision_matrix`** (e.g. `rule_final_aggregation`): apply the standard aggregation policy defined in this prompt.
 
 6. **Step decision = worst outcome** across all evaluated rules for the step:
-   `fail` > `insufficient_evidence` > `manual_review` > `pass`
+   `error` > `fail` > `manual_review` > `pass`
 
 ---
 
