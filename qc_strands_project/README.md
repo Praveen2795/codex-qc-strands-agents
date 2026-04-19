@@ -239,3 +239,229 @@ Run across multiple cursors to exercise every decision matrix branch before trea
 [ ] Sample data added covering pass, fail, and edge-case accounts
 [ ] End-to-end run produces correct verdicts across all test cursors
 ```
+
+---
+
+## Example Procedure — Internal Recovery Potential Settlements
+
+This is the fully working procedure JSON for the settlement QC that ships with this repository. Use it as a concrete template when creating a procedure for a new QC. Replace all settlement-specific field names, tool names, rule IDs, and decision matrix values with those that match your new QC.
+
+```json
+{
+  "qc_name": "settlement_review_qc",
+  "procedure_name": "Internal Recovery Potential Settlements",
+  "description": "Validates whether accounts flagged in the population as settled in full (SIF) have sufficient corroborating evidence in account tags and AR activity logs. Produces a step-level evidence decision and a final account-level QC verdict.",
+  "unit_of_work": "account",
+  "orchestration_mode": "dynamic",
+
+  "agents": [
+    {
+      "role": "data_fetcher_agent",
+      "purpose": "Retrieves structured population batches. Performs no QC judgment.",
+      "tool_name": "fetch_structured_qc_data"
+    },
+    {
+      "role": "qc_validation_agent",
+      "purpose": "Gathers raw evidence for one account using registered evidence tools. Returns evidence only.",
+      "tool_name": "collect_qc_evidence"
+    },
+    {
+      "role": "qc_decision_agent",
+      "purpose": "Evaluates evidence and rules to produce step-level or final-level QC decisions. Does not retrieve data.",
+      "tool_name": "make_qc_decision"
+    }
+  ],
+
+  "population_phase": {
+    "description": "Retrieve the accounts to be reviewed. The orchestrator runs this phase once per batch before entering the account phase.",
+    "steps": [
+      {
+        "step_id": "pop-1",
+        "step_type": "data_retrieval",
+        "title": "Load population batch",
+        "objective": "Retrieve a paginated batch of accounts in scope for this QC run.",
+        "preferred_agent": "data_fetcher_agent",
+        "required_output_fields": ["account_number", "settlement_flag", "borrower", "co_borrower"],
+        "evidence_tools": ["get_population_batch"],
+        "depends_on": [],
+        "evaluation_rule_ids": [],
+        "decision_policy": null
+      }
+    ]
+  },
+
+  "account_phase": {
+    "description": "For each account in the population batch, the orchestrator runs evidence collection, then step-level decisions, then the final account decision. Steps are driven by depends_on and step_type — the orchestrator must not hardcode a fixed sequence.",
+    "iteration": "per_account",
+    "steps": [
+      {
+        "step_id": "acct-1a",
+        "step_type": "evidence_collection",
+        "title": "Collect SIF tag evidence",
+        "objective": "Gather SIF account tag evidence for the account.",
+        "preferred_agent": "qc_validation_agent",
+        "evidence_tools": ["get_account_tag_sif_presence"],
+        "depends_on": ["pop-1"],
+        "evaluation_rule_ids": [],
+        "decision_policy": null
+      },
+      {
+        "step_id": "acct-1b",
+        "step_type": "step_decision",
+        "title": "Evaluate SIF tag evidence",
+        "objective": "Apply rule_sif_tag to the tag evidence collected in acct-1a. Return a step-level decision.",
+        "preferred_agent": "qc_decision_agent",
+        "evidence_tools": [],
+        "depends_on": ["pop-1", "acct-1a"],
+        "evaluation_rule_ids": ["rule_sif_tag"],
+        "decision_policy": "any_fail_fails",
+        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-1a, and the rule subset for evaluation_rule_ids (rule_sif_tag only)."
+      },
+      {
+        "step_id": "acct-2a",
+        "step_type": "evidence_collection",
+        "title": "Collect AR log settlement evidence",
+        "objective": "Gather AR log evidence for the account.",
+        "preferred_agent": "qc_validation_agent",
+        "evidence_tools": ["get_arlog_settlement_evidence"],
+        "depends_on": ["pop-1"],
+        "evaluation_rule_ids": [],
+        "decision_policy": null
+      },
+      {
+        "step_id": "acct-2b",
+        "step_type": "step_decision",
+        "title": "Evaluate AR log settlement evidence",
+        "objective": "Apply rule_arlog_direct and conditional rule_arlog_comment to the AR log evidence.",
+        "preferred_agent": "qc_decision_agent",
+        "evidence_tools": [],
+        "depends_on": ["pop-1", "acct-2a"],
+        "evaluation_rule_ids": ["rule_arlog_direct", "rule_arlog_comment"],
+        "decision_policy": "any_fail_fails",
+        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-2a, and the rule subset (rule_arlog_direct + rule_arlog_comment). Note rule_arlog_comment is conditional_fallback — skip if settled_in_full_found is true."
+      },
+      {
+        "step_id": "acct-3",
+        "step_type": "final_decision",
+        "title": "Final account QC verdict",
+        "objective": "Aggregate step decisions from acct-1b and acct-2b into one final QC verdict.",
+        "preferred_agent": "qc_decision_agent",
+        "evidence_tools": [],
+        "depends_on": ["acct-1b", "acct-2b"],
+        "evaluation_rule_ids": ["rule_final_aggregation"],
+        "decision_policy": "any_fail_fails_any_manual_review_manual_review",
+        "orchestration_hint": "Call make_qc_decision with decision_mode=final_decision. Pass account_context, step_decisions=[acct-1b result, acct-2b result], and evaluation_rules for rule_final_aggregation."
+      }
+    ]
+  },
+
+  "evaluation_rules": [
+    {
+      "rule_id": "rule_sif_tag",
+      "title": "SIF tag alignment",
+      "description": "The account tag SIF presence must align with settlement_flag.",
+      "evidence_check": "account_tag_sif_presence",
+      "evidence_field": "sif_present",
+      "applies_to_step": "acct-1b",
+      "allowed_decisions": ["pass", "fail", "manual_review"],
+      "decision_matrix": [
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": true,  "decision": "pass", "note": "Flag=Y and SIF tag present — consistent"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": false, "decision": "fail", "note": "Flag=Y but no SIF tag found — missing expected tag is a QC failure"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": true,  "decision": "fail", "note": "Flag=N but SIF tag found — direct contradiction"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": false, "decision": "pass", "note": "Flag=N and no SIF tag — consistent"}
+      ]
+    },
+    {
+      "rule_id": "rule_arlog_direct",
+      "title": "AR log direct settlement record",
+      "description": "If settlement_flag=Y, settled_in_full_found must be true to pass. If settlement_flag=N and settled_in_full_found=true, that is a contradiction.",
+      "evidence_check": "arlog_settlement_evidence",
+      "evidence_field": "settled_in_full_found",
+      "applies_to_step": "acct-2b",
+      "allowed_decisions": ["pass", "fail"],
+      "decision_matrix": [
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": true,  "decision": "pass", "note": "Flag=Y and SIF AR log row found — consistent"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": false, "decision": "fail", "note": "Flag=Y but no SIF AR log row — missing expected evidence is a QC failure"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": true,  "decision": "fail", "note": "Flag=N but SIF AR log row found — direct contradiction"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": false, "decision": "pass", "note": "Flag=N and no SIF AR log row — consistent"}
+      ]
+    },
+    {
+      "rule_id": "rule_arlog_comment",
+      "title": "AR log comment secondary check",
+      "description": "When no direct settled_in_full rows exist, the latest AR log comment is reviewed for secondary settlement implication.",
+      "evidence_check": "arlog_settlement_evidence",
+      "evidence_field": "latest_comment_message",
+      "applies_to_step": "acct-2b",
+      "allowed_decisions": ["pass", "fail", "manual_review"],
+      "rule_type": "conditional_fallback",
+      "fallback_condition": "Only applies when settled_in_full_found is false. If settled_in_full_found is true, skip this rule entirely. When latest_comment_message is null, treat as does_not_imply_settlement.",
+      "comment_implies_settlement_when": "The comment positively asserts the account was settled, paid in full, or fully resolved.",
+      "comment_does_not_imply_settlement_when": [
+        "The settlement keyword is negated — e.g. 'not final settlement', 'no settlement activity'",
+        "The comment is ambiguous or pending — e.g. 'awaiting confirmation', 'under review'",
+        "The comment merely references a settlement-related topic without confirming it"
+      ],
+      "decision_matrix": [
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": "implies_settlement",         "decision": "pass", "note": "Flag=Y and comment implies settlement — supports the flag"},
+        {"account_context_field": "settlement_flag", "account_context_value": "Y", "evidence_value": "does_not_imply_settlement", "decision": "fail", "note": "Flag=Y but AR log comment does not imply settlement — QC failure"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": "implies_settlement",         "decision": "fail", "note": "Flag=N but comment implies settlement — contradiction"},
+        {"account_context_field": "settlement_flag", "account_context_value": "N", "evidence_value": "does_not_imply_settlement", "decision": "pass", "note": "Flag=N and comment does not imply settlement — consistent"}
+      ]
+    },
+    {
+      "rule_id": "rule_final_aggregation",
+      "title": "Final verdict aggregation",
+      "description": "Aggregates step-level decisions into one final account verdict. Apply the aggregation policy defined in the prompt.",
+      "evidence_check": null,
+      "evidence_field": null,
+      "applies_to_step": "acct-3",
+      "allowed_decisions": ["pass", "fail", "manual_review"]
+    }
+  ],
+
+  "decision_policy": {
+    "step_decisions_enabled": true,
+    "final_decision_enabled": true,
+    "dynamic_decision_invocation": true,
+    "description": "The orchestrator may call the decision agent dynamically whenever sufficient evidence exists for a step.",
+    "step_aggregation_policy": "any_fail_fails",
+    "final_aggregation_policy": "any_fail_fails_any_manual_review_manual_review",
+    "allowed_step_outcomes": ["pass", "fail", "manual_review", "error"],
+    "allowed_final_outcomes": ["pass", "fail", "manual_review"]
+  },
+
+  "result_schema": {
+    "description": "Defines the expected fields of each per-account QC result produced by the orchestrator.",
+    "account_level_fields": [
+      {"field": "account_number",        "type": "string", "description": "The account identifier from the population phase."},
+      {"field": "account_context",       "type": "object", "description": "Full account context from the population output."},
+      {"field": "step_outputs",          "type": "object", "description": "Keyed by step_id. Raw evidence bundle per evidence_collection step."},
+      {"field": "step_decisions",        "type": "object", "description": "Keyed by step_id. Decision string per step_decision step."},
+      {"field": "step_decision_reasons", "type": "object", "description": "Keyed by step_id. Reason string per step_decision step."},
+      {"field": "final_decision",        "type": "string", "description": "Aggregated final verdict. Allowed: pass, fail, manual_review."},
+      {"field": "final_decision_reason", "type": "string", "description": "Concise explanation of the final verdict."}
+    ],
+    "execution_status": {
+      "field": "status",
+      "allowed_values": ["completed", "error"],
+      "note": "manual_review must only appear inside final_decision or step_decisions, never as execution status."
+    },
+    "error_schema": {
+      "fields": [
+        {"field": "type",    "description": "Short error class identifier."},
+        {"field": "message", "description": "Human-readable explanation of what went wrong."},
+        {"field": "step_id", "description": "The step_id at which the failure occurred, if known."}
+      ]
+    }
+  },
+
+  "checkpoint_scope": {
+    "description": "Limits for local testing only. Not for production use.",
+    "max_population_batches": 1,
+    "max_accounts_to_process": 1,
+    "selection_rule": "process the first account in the first batch only",
+    "batch_size": 2
+  }
+}
+```
