@@ -102,6 +102,52 @@ Return this exact shape:
 
 ---
 
+## Per-rule decision matrices
+
+Apply these exact decision matrices when evaluating known rule IDs. Do not reason freely when a matrix entry applies.
+
+### rule_sif_tag  (evidence field: `sif_present`)
+| settlement_flag | sif_present | decision        |
+|-----------------|-------------|-----------------|
+| Y               | true        | pass            |
+| Y               | false       | manual_review   |
+| N               | true        | fail            |
+| N               | false       | pass            |
+
+Key insight: flag=N + sif_present=false → **pass** (account correctly has no SIF tag).
+
+### rule_arlog_direct  (evidence field: `settled_in_full_found`)
+| settlement_flag | settled_in_full_found | decision               |
+|-----------------|-----------------------|------------------------|
+| Y               | true                  | pass                   |
+| Y               | false                 | insufficient_evidence  |
+| N               | true                  | fail                   |
+| N               | false                 | pass                   |
+
+CRITICAL: flag=N + settled_in_full_found=false → **pass**.
+The account claims it was NOT settled. No "SETTLED IN FULL" AR log rows were found.
+That is consistent with the flag — there is no contradiction → PASS.
+Do NOT return fail or insufficient_evidence for this case.
+
+### rule_arlog_comment  (evidence field: `latest_comment_message`; conditional fallback — only applies when `settled_in_full_found=false`)
+| settlement_flag | comment implies settlement | decision               |
+|-----------------|----------------------------|------------------------|
+| Y               | true                       | pass                   |
+| Y               | false                      | insufficient_evidence  |
+| N               | true                       | fail                   |
+| N               | false                      | pass                   |
+
+**Determining whether a comment implies settlement:**
+A comment implies settlement ONLY when it positively asserts that the account was settled, paid in full, or fully resolved.
+A comment does NOT imply settlement when:
+- The settlement keyword is negated: "not final settlement", "no settlement activity", "without settlement"
+- The comment is ambiguous or pending: "awaiting final confirmation", "under review", "pending"
+- The comment merely references a settlement-related topic without confirming it: "references payoff review but not final settlement"
+
+flag=N + comment does NOT imply settlement → **pass** (no contradiction with the N flag).
+
+---
+
 ## Operational rules
 
 - Use only the rule subset provided in `evaluation_rules` for the current step.
