@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from strands.hooks import (
+    AfterInvocationEvent,
     AfterModelCallEvent,
     AfterToolCallEvent,
     BeforeInvocationEvent,
@@ -225,6 +226,53 @@ class ModelCallRetryHook(HookProvider):
                 exc_str[:200],
                 "max retries exhausted" if self._retry_count >= self.max_retries else "non-transient",
             )
+
+
+class OrchestratorOutputRecoveryHook(HookProvider):
+    """Recover from empty or non-JSON orchestrator output using AfterInvocationEvent.resume.
+
+    When the orchestrator finishes but produces no text output (a transient LLM failure
+    where the model stops without emitting content), this hook detects the empty result
+    and triggers a follow-up invocation via ``event.resume`` with the full conversation
+    history preserved — so no sub-agent tool calls are repeated.
+
+    This is the Strands-recommended approach over an outer Python retry loop:
+    - Preserves the conversation history (all prior tool results are still in context)
+    - Lets the model produce the missing final JSON from its existing context
+    - Avoids redundant sub-agent API calls
+
+    Max resumes defaults to 2.
+    """
+
+    _RECOVERY_PROMPT = (
+        "You completed all tool calls but did not emit your final JSON output. "
+        "Using the tool results already in context, return the complete result JSON now. "
+        "Return one JSON object only, with no markdown fences and no extra prose."
+    )
+
+    def __init__(self, max_resumes: int = 2) -> None:
+        self.max_resumes = max_resumes
+        self._resume_count: int = 0
+
+    def register_hooks(self, registry: HookRegistry) -> None:
+        registry.add_callback(BeforeInvocationEvent, self._reset)
+        registry.add_callback(AfterInvocationEvent, self._recover_output)
+
+    def _reset(self, event: BeforeInvocationEvent) -> None:  # noqa: ARG002
+        self._resume_count = 0
+
+    async def _recover_output(self, event: AfterInvocationEvent) -> None:
+        if self._resume_count >= self.max_resumes:
+            return
+        result_text = str(event.result).strip() if event.result else ""
+        if not result_text:
+            self._resume_count += 1
+            logger.warning(
+                "orchestrator_empty_output resume=%d/%d — nudging model to emit final JSON",
+                self._resume_count,
+                self.max_resumes,
+            )
+            event.resume = self._RECOVERY_PROMPT
 
 
 def setup_project_logging(run_name: str = "demo_flow") -> Path:

@@ -274,36 +274,12 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
 
     logger.info("demo_task=%s", json.dumps(demo_task, sort_keys=True))
     try:
-        _MAX_ORCHESTRATOR_RETRIES = 3
-        checkpoint_result = None
-        for _attempt in range(1, _MAX_ORCHESTRATOR_RETRIES + 1):
-            _raw_response = str(orchestrator_agent(json.dumps(demo_task)))
-            if not _raw_response.strip():
-                logger.warning(
-                    "orchestrator_empty_response attempt=%d/%d — retrying",
-                    _attempt, _MAX_ORCHESTRATOR_RETRIES,
-                )
-                if _attempt < _MAX_ORCHESTRATOR_RETRIES:
-                    continue
-                raise ValueError(
-                    f"Orchestrator returned an empty response on all {_MAX_ORCHESTRATOR_RETRIES} attempts. "
-                    "This is a transient LLM failure — re-run the command."
-                )
-            try:
-                checkpoint_result = normalize_agent_tool_output(
-                    parse_json_response_text(_raw_response)
-                )
-                break  # valid structured response — exit retry loop
-            except (json.JSONDecodeError, ValueError) as parse_exc:
-                logger.warning(
-                    "orchestrator_unparseable_response attempt=%d/%d error=%s response_preview=%r — retrying",
-                    _attempt, _MAX_ORCHESTRATOR_RETRIES, parse_exc, _raw_response[:300],
-                )
-                if _attempt == _MAX_ORCHESTRATOR_RETRIES:
-                    raise ValueError(
-                        f"Orchestrator returned unparseable output on all {_MAX_ORCHESTRATOR_RETRIES} attempts. "
-                        f"Last error: {parse_exc}"
-                    ) from parse_exc
+        # OrchestratorOutputRecoveryHook handles empty/non-JSON output via
+        # AfterInvocationEvent.resume — the hook nudges the model to emit its
+        # final JSON using the existing conversation history (no tool re-runs).
+        checkpoint_result = normalize_agent_tool_output(
+            parse_json_response_text(str(orchestrator_agent(json.dumps(demo_task))))
+        )
         logger.info(
             "checkpoint_result=%s",
             json.dumps(checkpoint_result, sort_keys=True, default=str),
