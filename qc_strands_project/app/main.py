@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 import textwrap
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,13 @@ def _persist_account_result(jsonl_path: Path, record: dict) -> None:
 def _reset_jsonl(jsonl_path: Path) -> None:
     """Truncate the JSONL file at the start of a run so each run starts clean."""
     jsonl_path.write_text("", encoding="utf-8")
+
+
+def _make_run_id() -> str:
+    """Return a short, human-readable run identifier: ``run-YYYY-MM-DD-<hex4>``."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    suffix = uuid.uuid4().hex[:4]
+    return f"run-{today}-{suffix}"
 
 
 # ── Live trace callback ───────────────────────────────────────────────────────
@@ -217,6 +225,7 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
 
     jsonl_path = run_log_path.with_suffix(".jsonl")
     _reset_jsonl(jsonl_path)
+    run_id = _make_run_id()
 
     data_fetcher_agent = build_data_fetcher_agent()
     qc_validation_agent = build_qc_validation_agent()
@@ -288,21 +297,25 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
 
     # Persist per-account result immediately after the orchestrator completes.
     _acct_ctx = _ar.get("account_context") or {}
+    _step_dec = _ar.get("step_decisions") or {}
+    _step_rea = _ar.get("step_decision_reasons") or {}
     _persist_account_result(jsonl_path, {
+        "run_id": run_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "run_mode": "orchestrated",
         "procedure_name": checkpoint_result.get("procedure_name"),
         "batch_id": checkpoint_result.get("batch_id"),
         "account_number": _ar.get("account_number"),
+        "borrower_name": _acct_ctx.get("borrower") if isinstance(_acct_ctx, dict) else None,
+        "co_borrower_name": _acct_ctx.get("co_borrower") if isinstance(_acct_ctx, dict) else None,
         "settlement_flag": _acct_ctx.get("settlement_flag") if isinstance(_acct_ctx, dict) else None,
-        "borrower": _acct_ctx.get("borrower") if isinstance(_acct_ctx, dict) else None,
-        "co_borrower": _acct_ctx.get("co_borrower") if isinstance(_acct_ctx, dict) else None,
-        "final_decision": _ar.get("final_decision"),
-        "final_decision_reason": _ar.get("final_decision_reason"),
-        "step_decisions": _ar.get("step_decisions", {}),
-        "step_decision_reasons": _ar.get("step_decision_reasons", {}),
+        "tag_check_result": _step_dec.get("acct-1b"),
+        "tag_check_reason": _step_rea.get("acct-1b"),
+        "arlog_check_result": _step_dec.get("acct-2b"),
+        "arlog_check_reason": _step_rea.get("acct-2b"),
+        "final_qc_result": _ar.get("final_decision"),
+        "final_qc_reason": _ar.get("final_decision_reason"),
         "status": checkpoint_result.get("status"),
-        "error": checkpoint_result.get("error"),
+        "error_message": checkpoint_result.get("error"),
     })
 
     return {
@@ -458,6 +471,7 @@ def run_local_sequential_demo() -> dict:
 
     jsonl_path = run_log_path.with_suffix(".jsonl")
     _reset_jsonl(jsonl_path)
+    run_id = _make_run_id()
 
     sample_procedure = load_schema_json("sample_procedure.json")
     evaluation_rules = sample_procedure.get("evaluation_rules", [])
@@ -596,21 +610,22 @@ def run_local_sequential_demo() -> dict:
     print()
 
     _persist_account_result(jsonl_path, {
+        "run_id": run_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "run_mode": "local",
+        "procedure_name": sample_procedure.get("procedure_name"),
+        "batch_id": None,
         "account_number": account_number,
+        "borrower_name": account_data.get("borrower", ""),
+        "co_borrower_name": account_data.get("co_borrower"),
         "settlement_flag": settlement_flag,
-        "borrower": account_data.get("borrower", ""),
-        "final_decision": dec_3,
-        "step_decisions": {
-            "tag": dec_1b,
-            "arlog": dec_2b,
-        },
-        "rule_outcomes": {
-            "tag": tag_decision.get("rule_outcomes", {}),
-            "arlog": arlog_decision.get("rule_outcomes", {}),
-        },
-        "skipped_rule_ids": arlog_decision.get("skipped_rule_ids", []),
+        "tag_check_result": dec_1b,
+        "tag_check_reason": tag_decision.get("reason"),
+        "arlog_check_result": dec_2b,
+        "arlog_check_reason": arlog_decision.get("reason"),
+        "final_qc_result": dec_3,
+        "final_qc_reason": final_decision.get("reason"),
+        "status": "completed",
+        "error_message": None,
     })
     print(f"  results   → {_c(str(jsonl_path), _DIM)}")
     print()
@@ -635,10 +650,10 @@ def run_local_sequential_demo() -> dict:
 # ── Multi-account validation test ─────────────────────────────────────────────
 
 _TEST_ACCOUNTS = [
-    {"account_number": "100001", "settlement_flag": "Y", "borrower": "Alex Johnson",  "expected_final": "pass"},
-    {"account_number": "100010", "settlement_flag": "N", "borrower": "Hayden Flores", "expected_final": "fail"},
-    {"account_number": "100004", "settlement_flag": "Y", "borrower": "Riley Cooper",  "expected_final": "manual_review"},
-    {"account_number": "100005", "settlement_flag": "Y", "borrower": "Avery Patel",   "expected_final": "manual_review"},
+    {"account_number": "100001", "settlement_flag": "Y", "borrower": "Alex Johnson",  "co_borrower": "Jamie Johnson", "expected_final": "pass"},
+    {"account_number": "100010", "settlement_flag": "N", "borrower": "Hayden Flores", "co_borrower": "Morgan Flores", "expected_final": "fail"},
+    {"account_number": "100004", "settlement_flag": "Y", "borrower": "Riley Cooper",  "co_borrower": None,            "expected_final": "manual_review"},
+    {"account_number": "100005", "settlement_flag": "Y", "borrower": "Avery Patel",   "co_borrower": "Sam Patel",     "expected_final": "manual_review"},
 ]
 
 
@@ -656,6 +671,7 @@ def run_multi_account_test() -> list[dict]:
 
     jsonl_path = run_log_path.with_suffix(".jsonl")
     _reset_jsonl(jsonl_path)
+    run_id = _make_run_id()
 
     sample_procedure = load_schema_json("sample_procedure.json")
     evaluation_rules = sample_procedure.get("evaluation_rules", [])
@@ -731,23 +747,22 @@ def run_multi_account_test() -> list[dict]:
         })
 
         _persist_account_result(jsonl_path, {
+            "run_id": run_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "run_mode": "test",
+            "procedure_name": sample_procedure.get("procedure_name"),
+            "batch_id": None,
             "account_number": account_number,
+            "borrower_name": acct["borrower"],
+            "co_borrower_name": acct.get("co_borrower"),
             "settlement_flag": settlement_flag,
-            "borrower": acct["borrower"],
-            "expected_final": expected_final,
-            "final_decision": final.get("decision"),
-            "step_decisions": {
-                "tag": tag_decision.get("decision"),
-                "arlog": arlog_decision.get("decision"),
-            },
-            "rule_outcomes": {
-                "tag": tag_decision.get("rule_outcomes", {}),
-                "arlog": arlog_decision.get("rule_outcomes", {}),
-            },
-            "skipped_rule_ids": arlog_decision.get("skipped_rule_ids", []),
-            "matched": matched,
+            "tag_check_result": tag_decision.get("decision"),
+            "tag_check_reason": tag_decision.get("reason"),
+            "arlog_check_result": arlog_decision.get("decision"),
+            "arlog_check_reason": arlog_decision.get("reason"),
+            "final_qc_result": final.get("decision"),
+            "final_qc_reason": final.get("reason"),
+            "status": "completed",
+            "error_message": None,
         })
 
         tag_dec = tag_decision.get("decision", "?")
