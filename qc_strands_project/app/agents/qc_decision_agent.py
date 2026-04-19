@@ -48,7 +48,7 @@ def _comment_implies_settlement(text: str) -> bool:
     return False
 
 
-VALID_STEP_DECISIONS = frozenset({"pass", "fail", "insufficient_evidence", "manual_review"})
+VALID_STEP_DECISIONS = frozenset({"pass", "fail", "manual_review", "error"})
 VALID_FINAL_DECISIONS = frozenset({"pass", "fail", "manual_review"})
 
 DEFAULT_QC_DECISION_DESCRIPTION = (
