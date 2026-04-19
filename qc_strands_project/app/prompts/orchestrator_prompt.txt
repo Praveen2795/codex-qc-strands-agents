@@ -91,12 +91,18 @@ Final decision:
 
 ---
 
-Return this shape after all steps complete (one JSON object, no markdown fences, no extra prose):
-  {"task_request":"...","procedure_name":"...","batch_id":"...","current_account":{...},"interpreted_steps":[{"step_id":"...","phase":"...","title":"...","preferred_agent":"...","chosen_action":"...","agent_request":{...}}],"outputs":[{"step_id":"...","phase":"...","agent_called":"...","agent_output":{...}}],"step_decision":{...},"final_decision":{...},"status":"completed"}
+Return this shape after all steps complete for the account (one JSON object, no markdown fences, no extra prose):
+  {"status":"completed","procedure_name":"...","batch_id":"...","account_result":{"account_number":"...","account_context":{...},"step_outputs":{"<evidence_step_id>":{<evidence_bundle_output>}},"step_decisions":{"<step_decision_step_id>":"<pass|fail|insufficient_evidence|manual_review>"},"step_decision_reasons":{"<step_decision_step_id>":"<concise reason>"},"final_decision":"<pass|fail|manual_review>","final_decision_reason":"<concise reason>"}}
 
-In the final output:
-- `agent_request` must be only the minimal step request sent to the sub-agent.
-- `agent_output` must be the parsed JSON returned by the sub-agent (no wrapper objects).
-- `step_decision` must be the full step-level decision object from the last `step_decision` step.
-- `final_decision` must be the full final-level decision object from the `final_decision` step.
-- `phase` must be either `"population_phase"` or `"account_phase"`.
+If a system or technical failure prevents a step from completing, return:
+  {"status":"error","error":{"type":"<error_type>","message":"<what went wrong>","step_id":"<step_id if known>"},"procedure_name":"...","batch_id":"..."}
+
+Output rules:
+- `status` must be `"completed"` or `"error"` only. Never use `"manual_review"` as status.
+- `"manual_review"` may only appear inside `final_decision` or `step_decisions`. System status and business decision are always separate.
+- `step_outputs`: keyed by step_id. Include the full evidence bundle output for every `evidence_collection` step.
+- `step_decisions`: keyed by step_id. Include the decision string for every `step_decision` step. Do NOT include the final_decision step here.
+- `step_decision_reasons`: keyed by step_id. One concise plain-text reason per `step_decision` step.
+- `final_decision` and `final_decision_reason` come from the `final_decision` step output only.
+- The fields in `account_result` must match the procedure's `result_schema.account_level_fields`.
+- Do not include internal orchestration metadata (tool call lists, phase labels, agent names) in the output.

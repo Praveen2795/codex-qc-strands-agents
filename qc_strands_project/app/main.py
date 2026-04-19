@@ -270,31 +270,29 @@ def demo_workflow(*, verbose: bool = False) -> dict:
         "checkpoint_result=%s",
         json.dumps(checkpoint_result, sort_keys=True, default=str),
     )
-    final_dec = checkpoint_result.get("final_decision") or {}
+    _ar = checkpoint_result.get("account_result") or {}
     logger.info(
-        "demo_workflow_completed status=%s current_account=%s final_decision=%s",
+        "demo_workflow_completed status=%s account=%s final_decision=%s",
         checkpoint_result.get("status"),
-        checkpoint_result.get("current_account"),
-        final_dec.get("decision") if isinstance(final_dec, dict) else final_dec,
+        _ar.get("account_number"),
+        _ar.get("final_decision"),
     )
 
     # Persist per-account result immediately after the orchestrator completes.
-    # The orchestrator currently processes one account per run; build the record
-    # from checkpoint_result so all three run modes share the same JSONL schema.
-    _current_account = checkpoint_result.get("current_account") or {}
-    _step_dec = checkpoint_result.get("step_decision") or {}
-    _final_dec_obj = checkpoint_result.get("final_decision") or {}
+    _acct_ctx = _ar.get("account_context") or {}
     _persist_account_result(jsonl_path, {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "run_mode": "orchestrated",
         "procedure_name": checkpoint_result.get("procedure_name"),
         "batch_id": checkpoint_result.get("batch_id"),
-        "account_number": _current_account.get("account_number") if isinstance(_current_account, dict) else str(_current_account),
-        "settlement_flag": _current_account.get("settlement_flag") if isinstance(_current_account, dict) else None,
-        "final_decision": _final_dec_obj.get("decision") if isinstance(_final_dec_obj, dict) else None,
-        "step_decision": _step_dec.get("decision") if isinstance(_step_dec, dict) else None,
-        "rule_outcomes": _step_dec.get("rule_outcomes", {}) if isinstance(_step_dec, dict) else {},
+        "account_number": _ar.get("account_number"),
+        "settlement_flag": _acct_ctx.get("settlement_flag") if isinstance(_acct_ctx, dict) else None,
+        "final_decision": _ar.get("final_decision"),
+        "final_decision_reason": _ar.get("final_decision_reason"),
+        "step_decisions": _ar.get("step_decisions", {}),
+        "step_decision_reasons": _ar.get("step_decision_reasons", {}),
         "status": checkpoint_result.get("status"),
+        "error": checkpoint_result.get("error"),
     })
 
     return {
@@ -320,85 +318,53 @@ def demo_workflow(*, verbose: bool = False) -> dict:
 # ── Post-run pretty trace ─────────────────────────────────────────────────────
 
 def print_flow_trace(result: dict, *, verbose: bool = False) -> None:
-    """Print a human-readable step-by-step trace of the completed QC flow.
-
-    Args:
-        verbose: When True, print the full agent_request (INPUT) sent to each
-                 sub-agent alongside the output, so you can see exactly what was
-                 passed between agents at every step.
-    """
+    """Print a human-readable step-by-step trace of the completed QC flow."""
     cr = result.get("checkpoint_result", {})
-    outputs: list[dict] = cr.get("outputs", [])
-    interpreted: list[dict] = cr.get("interpreted_steps", [])
-    # Build a step_id → agent_request lookup for verbose input display
-    input_by_step: dict[str, dict] = {
-        s["step_id"]: s.get("agent_request", {})
-        for s in interpreted
-    }
-    step_decision: dict = cr.get("step_decision", {})
-    final_decision: dict = cr.get("final_decision", {})
+    status = cr.get("status", "?")
+    ar = cr.get("account_result") or {}
 
     # ── Header ────────────────────────────────────────────────────────────────
     _section("QC FLOW — STEP-BY-STEP RESULTS")
-    _field("procedure",      cr.get("procedure_name", "?"))
-    _field("task_request",   result.get("demo_request", "?"))
-    _field("batch_id",       cr.get("batch_id", "?"))
-    _acct = cr.get("current_account", {})
-    _acct_display = _acct.get("account_number", str(_acct)) if isinstance(_acct, dict) else str(_acct)
-    _field("current_account", _c(_acct_display, _BOLD))
-    _field("status",         _c(str(cr.get("status", "?")), _GREEN, _BOLD))
+    _field("procedure",    cr.get("procedure_name", "?"))
+    _field("task_request", result.get("demo_request", "?"))
+    _field("batch_id",     cr.get("batch_id", "?"))
+    status_col = _GREEN if status == "completed" else _RED
+    _field("status", _c(status.upper(), status_col, _BOLD))
 
-    # ── Population phase ──────────────────────────────────────────────────────
-    pop_outputs = [o for o in outputs if o.get("phase") == "population_phase"]
-    if pop_outputs:
-        _section("PHASE 1 — POPULATION RETRIEVAL")
-        for o in pop_outputs:
-            sid = o["step_id"]
-            _subsection(f"step {sid}  ·  agent: {o['agent_called']}")
+    # ── Execution error ───────────────────────────────────────────────────────
+    if status == "error":
+        err = cr.get("error") or {}
+        _section("EXECUTION ERROR")
+        _field("type",    err.get("type", "unknown"))
+        _field("message", err.get("message", ""))
+        if err.get("step_id"):
+            _field("failed_at_step", err["step_id"])
+        print()
+        print(_hr())
+        return
+
+    # ── Account context ───────────────────────────────────────────────────────
+    _section("ACCOUNT")
+    _field("account_number", _c(str(ar.get("account_number", "?")), _BOLD))
+    acct_ctx = ar.get("account_context") or {}
+    if isinstance(acct_ctx, dict):
+        for k, v in acct_ctx.items():
+            if k != "account_number":
+                _field(k, v)
+
+    # ── Evidence collected ────────────────────────────────────────────────────
+    step_outputs: dict = ar.get("step_outputs") or {}
+    if step_outputs:
+        _section("PHASE 1 — EVIDENCE COLLECTED")
+        for step_id, raw_bundle in sorted(step_outputs.items()):
+            out = _parse_output(raw_bundle)
+            _subsection(f"step {step_id}  ·  evidence collection  ·  account {out.get('account_number', '?')}")
             if verbose:
-                req = input_by_step.get(sid, {})
-                if req:
-                    print(_c("    ── INPUT sent to sub-agent ──────────────────────────────", _DIM))
-                    for line in json.dumps(req, indent=4, default=str).splitlines():
-                        print(f"    {_c(line, _DIM)}")
-                    print(_c("    ─────────────────────────────────────────────────────────", _DIM))
-            out = _parse_output(o.get("agent_output", {}))
-            accounts = out.get("accounts", [])
-            _field("accounts_returned", len(accounts))
-            _field("next_cursor",       out.get("next_cursor"))
-            _field("has_more",          out.get("has_more"))
-            if accounts:
-                print(f"    {_c('accounts:', _BOLD)}")
-                for acc in accounts:
-                    flag = acc.get("settlement_flag", "?")
-                    flag_col = _GREEN if flag == "Y" else _RED
-                    print(
-                        f"      • {_c(acc.get('account_number', '?'), _BOLD)}"
-                        f"  settlement_flag={_c(flag, flag_col, _BOLD)}"
-                        f"  borrower={acc.get('borrower', '?')}"
-                    )
-
-    # ── Account phase ─────────────────────────────────────────────────────────
-    acct_outputs = [o for o in outputs if o.get("phase") == "account_phase"]
-    if acct_outputs:
-        _section("PHASE 2 — PER-ACCOUNT PROCESSING")
-
-        for o in acct_outputs:
-            out = _parse_output(o.get("agent_output", {}))
-            step_id = o["step_id"]
-            agent = o["agent_called"]
-            scope = out.get("decision_scope", "")
-
-            # ── Evidence step ────────────────────────────────────────────────
-            if agent == "collect_qc_evidence":
-                _subsection(f"step {step_id}  ·  evidence collection  ·  account {out.get('account_number', '?')}")
-                if verbose:
-                    req = input_by_step.get(step_id, {})
-                    if req:
-                        print(_c("    ── INPUT sent to sub-agent ──────────────────────────────", _DIM))
-                        for line in json.dumps(req, indent=4, default=str).splitlines():
-                            print(f"    {_c(line, _DIM)}")
-                        print(_c("    ─────────────────────────────────────────────────────────", _DIM))
+                print(_c("    ── FULL EVIDENCE BUNDLE ─────────────────────────────────", _DIM))
+                for line in json.dumps(out, indent=4, default=str).splitlines():
+                    print(f"    {_c(line, _DIM)}")
+                print(_c("    ─────────────────────────────────────────────────────────", _DIM))
+            else:
                 for ev in out.get("evidence", []):
                     check = ev.get("check", "?")
                     print(f"\n    {_c(f'  check: {check}', _BOLD)}")
@@ -406,9 +372,9 @@ def print_flow_trace(result: dict, *, verbose: bool = False) -> None:
                     if check == "account_tag_sif_presence":
                         present = ev.get("sif_present", False)
                         col = _GREEN if present else _RED
-                        _field("sif_present",               _c(str(present), col, _BOLD))
-                        _field("matching_sif_rows_count",   ev.get("matching_sif_rows_count", 0))
-                        _field("matching_sif_tag_dates",    ev.get("matching_sif_tag_dates", []))
+                        _field("sif_present",             _c(str(present), col, _BOLD))
+                        _field("matching_sif_rows_count", ev.get("matching_sif_rows_count", 0))
+                        _field("matching_sif_tag_dates",  ev.get("matching_sif_tag_dates", []))
                     elif check == "arlog_settlement_evidence":
                         found = ev.get("settled_in_full_found", False)
                         col = _GREEN if found else _DIM
@@ -422,80 +388,40 @@ def print_flow_trace(result: dict, *, verbose: bool = False) -> None:
                             for row in rows:
                                 print(f"      • {row.get('timestamp', '?')}  {row.get('message', '')!r}")
 
-            # ── Step decision ────────────────────────────────────────────────
-            elif agent == "make_qc_decision" and scope == "step_level":
-                dec = out.get("decision", "?")
-                col = _decision_colour(dec)
-                _subsection(f"step {step_id}  ·  step-level decision  ·  account {out.get('account_number', '?')}")
-                if verbose:
-                    req = input_by_step.get(step_id, {})
-                    if req:
-                        print(_c("    ── INPUT sent to sub-agent ──────────────────────────────", _DIM))
-                        for line in json.dumps(req, indent=4, default=str).splitlines():
-                            print(f"    {_c(line, _DIM)}")
-                        print(_c("    ─────────────────────────────────────────────────────────", _DIM))
-                print()
-                print(f"    {_c('DECISION:', _BOLD)}  {_c(dec.upper(), col, _BOLD)}")
-                print()
-                _field("reason",               out.get("reason", ""))
-                _field("used_rule_ids",         out.get("used_rule_ids", []))
-                _field("used_evidence_checks",  out.get("used_evidence_checks", []))
-                _field("rule_outcomes",         out.get("rule_outcomes", {}))
-                if out.get("skipped_rule_ids"):
-                    _field("skipped_rule_ids",  out.get("skipped_rule_ids", []))
+    # ── Step decisions ────────────────────────────────────────────────────────
+    step_decisions: dict = ar.get("step_decisions") or {}
+    step_decision_reasons: dict = ar.get("step_decision_reasons") or {}
+    if step_decisions:
+        _section("PHASE 2 — STEP DECISIONS")
+        for step_id, decision in sorted(step_decisions.items()):
+            dec = str(decision)
+            col = _decision_colour(dec)
+            reason = step_decision_reasons.get(step_id, "")
+            _subsection(f"step {step_id}  ·  step decision  ·  account {ar.get('account_number', '?')}")
+            print()
+            print(f"    {_c('DECISION:', _BOLD)}  {_c(dec.upper(), col, _BOLD)}")
+            print()
+            _field("reason", reason)
 
-            # ── Final decision ───────────────────────────────────────────────
-            elif agent == "make_qc_decision" and scope == "final_level":
-                dec = out.get("decision", "?")
-                col = _decision_colour(dec)
-                _subsection(f"step {step_id}  ·  final decision  ·  account {out.get('account_number', '?')}")
-                if verbose:
-                    req = input_by_step.get(step_id, {})
-                    if req:
-                        print(_c("    ── INPUT sent to sub-agent ──────────────────────────────", _DIM))
-                        for line in json.dumps(req, indent=4, default=str).splitlines():
-                            print(f"    {_c(line, _DIM)}")
-                        print(_c("    ─────────────────────────────────────────────────────────", _DIM))
-                print()
-                print(f"    {_c('FINAL VERDICT:', _BOLD)}  {_c(dec.upper(), col, _BOLD)}")
-                print()
-                _field("reason",               out.get("reason", ""))
-                _field("used_rule_ids",         out.get("used_rule_ids", []))
-                _field("used_step_decisions",   out.get("used_step_decisions", []))
+    # ── Final verdict ─────────────────────────────────────────────────────────
+    final_decision = str(ar.get("final_decision", "?"))
+    final_reason = str(ar.get("final_decision_reason", ""))
+    final_col = _decision_colour(final_decision)
+    _section("FINAL VERDICT")
+    print()
+    print(f"    {_c('FINAL VERDICT:', _BOLD)}  {_c(final_decision.upper(), final_col, _BOLD)}")
+    print()
+    _field("reason", final_reason)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     _section("SUMMARY")
-    account = cr.get("current_account", "?")
-    s_dec = step_decision.get("decision", "?")
-    f_dec = final_decision.get("decision", "?")
-    s_col = _decision_colour(s_dec)
-    f_col = _decision_colour(f_dec)
-
-    print(f"  account          : {_c(str(account), _BOLD)}")
-    print(f"  step decision    : {_c(s_dec.upper(), s_col, _BOLD)}")
-    print(f"  final verdict    : {_c(f_dec.upper(), f_col, _BOLD)}")
-    # Aggregate rules and evidence checks across ALL step-level decisions (not just the last one)
-    def _unique_ordered(lst: list) -> list:
-        seen: set = set()
-        return [x for x in lst if x is not None and not (x in seen or seen.add(x))]
-
-    _all_rule_ids: list = []
-    _all_ev_checks: list = []
-    _all_skipped: list = []
-    for _o in outputs:
-        if _o.get("agent_called") == "make_qc_decision":
-            _out = _parse_output(_o.get("agent_output", {}))
-            if _out.get("decision_scope") == "step_level":
-                _all_rule_ids.extend(_out.get("used_rule_ids", []))
-                _all_ev_checks.extend(_out.get("used_evidence_checks", []))
-                _all_skipped.extend(_out.get("skipped_rule_ids", []))
-    print(f"  rules applied    : {_unique_ordered(_all_rule_ids)}")
-    if _all_skipped:
-        print(f"  rules skipped    : {_unique_ordered(_all_skipped)}")
-    print(f"  evidence checks  : {_unique_ordered(_all_ev_checks)}")
-    print()
-    _field("step reason",  step_decision.get("reason", ""))
-    _field("final reason", final_decision.get("reason", ""))
+    print(f"  account          : {_c(str(ar.get('account_number', '?')), _BOLD)}")
+    print(f"  final verdict    : {_c(final_decision.upper(), final_col, _BOLD)}")
+    if step_decisions:
+        for step_id, dec in sorted(step_decisions.items()):
+            dec_str = str(dec)
+            col = _decision_colour(dec_str)
+            print(f"  {step_id:<20}: {_c(dec_str.upper(), col, _BOLD)}")
     print()
     print(f"  log file  → {_c(result.get('log_file', '?'), _DIM)}")
     if result.get("jsonl_file"):

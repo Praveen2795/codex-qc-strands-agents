@@ -159,6 +159,32 @@
     "allowed_final_outcomes": ["pass", "fail", "manual_review"]
   },
 
+  "result_schema": {
+    "description": "Defines the expected fields of each per-account QC result produced by the orchestrator. The orchestrator must populate all account_level_fields for every successfully processed account.",
+    "account_level_fields": [
+      {"field": "account_number",         "type": "string", "description": "The account identifier from the population phase."},
+      {"field": "account_context",        "type": "object", "description": "Full account context carried from the population output (settlement_flag, borrower, etc.)."},
+      {"field": "step_outputs",           "type": "object", "description": "Keyed by step_id. Contains the raw evidence bundle returned by each evidence_collection step."},
+      {"field": "step_decisions",         "type": "object", "description": "Keyed by step_id. Contains the decision string (pass / fail / insufficient_evidence / manual_review) for each step_decision step. Does NOT include the final_decision step."},
+      {"field": "step_decision_reasons",  "type": "object", "description": "Keyed by step_id. Contains one concise reason string for each step_decision step."},
+      {"field": "final_decision",         "type": "string", "description": "Aggregated final verdict from the final_decision step. Allowed values: pass, fail, manual_review."},
+      {"field": "final_decision_reason",  "type": "string", "description": "Concise plain-text explanation of the final verdict."}
+    ],
+    "execution_status": {
+      "field": "status",
+      "allowed_values": ["completed", "error"],
+      "note": "manual_review must only appear inside final_decision or step_decisions. It must never be used as execution status. System status and business decision are always separate."
+    },
+    "error_schema": {
+      "description": "Populated only when status is error. Never populated on a completed run.",
+      "fields": [
+        {"field": "type",    "description": "Short error class identifier (e.g. tool_failure, schema_error, timeout)."},
+        {"field": "message", "description": "Human-readable explanation of what went wrong."},
+        {"field": "step_id", "description": "The step_id at which the failure occurred, if known. Omit if not applicable."}
+      ]
+    }
+  },
+
   "checkpoint_scope": {
     "description": "Limits for local testing and flow validation. Not for production use.",
     "max_population_batches": 1,
