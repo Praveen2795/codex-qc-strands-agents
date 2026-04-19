@@ -13,6 +13,7 @@ and rules to produce each decision.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from strands import Agent
@@ -22,6 +23,30 @@ from app.logging_utils import ModelCallRetryHook, create_agent_callback_handler
 from app.models.factory import build_default_agent_model
 
 logger = logging.getLogger("qc_strands.agents.qc_decision")
+
+# Regex-based settlement detection: match settlement keywords only when NOT negated.
+# Looks at the 25-character window before each keyword for negation words (not, no, without, never).
+_SETTLEMENT_KEYWORD_RE = re.compile(
+    r"\b(settled|settlement|paid\s+in\s+full|resolved)\b", re.IGNORECASE
+)
+_NEGATION_PRECEDING_RE = re.compile(
+    r"\b(not|no|without|never)\s+(\S+\s+)*$", re.IGNORECASE
+)
+
+
+def _comment_implies_settlement(text: str) -> bool:
+    """Return True only when the comment positively asserts settlement.
+
+    Prevents false positives from negated phrases such as
+    'not final settlement' or 'no settlement identified'.
+    """
+    for m in _SETTLEMENT_KEYWORD_RE.finditer(text):
+        preceding = text[max(0, m.start() - 25): m.start()]
+        if _NEGATION_PRECEDING_RE.search(preceding):
+            continue  # keyword is negated — skip
+        return True
+    return False
+
 
 VALID_STEP_DECISIONS = frozenset({"pass", "fail", "insufficient_evidence", "manual_review"})
 VALID_FINAL_DECISIONS = frozenset({"pass", "fail", "manual_review"})
@@ -230,10 +255,7 @@ def _apply_step_decision_rules(request: dict[str, Any]) -> dict[str, Any]:
     sif_present: bool = bool(tag_check.get("sif_present", False))
     settled_in_full_found: bool = bool(arlog_check.get("settled_in_full_found", False))
     latest_comment: str = arlog_check.get("latest_comment_message") or ""
-    comment_implies_settlement: bool = any(
-        phrase in latest_comment.lower()
-        for phrase in ("settled", "settlement", "paid in full", "resolved")
-    )
+    comment_implies_settlement: bool = _comment_implies_settlement(latest_comment)
 
     # Build used_checks from evidence families referenced by the active rules only
     rule_id_set = set(rule_ids)

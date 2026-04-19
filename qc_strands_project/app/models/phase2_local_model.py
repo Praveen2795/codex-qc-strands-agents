@@ -8,6 +8,7 @@ execution, but use simple deterministic logic instead of a production LLM.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable
 from typing import Any
@@ -18,6 +19,24 @@ from strands.models.model import Model
 from strands.types.content import Messages, SystemContentBlock
 from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolChoice, ToolSpec
+
+# Negation-aware settlement detection (mirrors qc_decision_agent._comment_implies_settlement).
+_SETTLEMENT_KEYWORD_RE = re.compile(
+    r"\b(settled|settlement|paid\s+in\s+full|resolved)\b", re.IGNORECASE
+)
+_NEGATION_PRECEDING_RE = re.compile(
+    r"\b(not|no|without|never)\s+(\S+\s+)*$", re.IGNORECASE
+)
+
+
+def _comment_implies_settlement(text: str) -> bool:
+    """Return True only when the comment positively asserts settlement."""
+    for m in _SETTLEMENT_KEYWORD_RE.finditer(text):
+        preceding = text[max(0, m.start() - 25): m.start()]
+        if _NEGATION_PRECEDING_RE.search(preceding):
+            continue
+        return True
+    return False
 
 
 def _latest_user_text(messages: Messages) -> str:
@@ -90,10 +109,7 @@ def _step_decision_deterministic(request: dict[str, Any]) -> dict[str, Any]:
     sif_present: bool = bool(tag_check.get("sif_present", False))
     settled_in_full_found: bool = bool(arlog_check.get("settled_in_full_found", False))
     latest_comment: str = arlog_check.get("latest_comment_message") or ""
-    comment_implies: bool = any(
-        phrase in latest_comment.lower()
-        for phrase in ("settled", "settlement", "paid in full", "resolved")
-    )
+    comment_implies: bool = _comment_implies_settlement(latest_comment)
 
     rule_id_set = {r["rule_id"] for r in rules if "rule_id" in r}
     used_checks: list[str] = []

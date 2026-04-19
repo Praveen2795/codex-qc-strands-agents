@@ -640,7 +640,7 @@ def run_multi_account_test() -> list[dict]:
 
     Validates all meaningful outcome paths without the LLM orchestrator:
         100001  flag=Y  SIF tag + direct AR evidence          → PASS
-        100010  flag=N  SIF tag + ambiguous AR comment        → FAIL
+        100010  flag=N  SIF tag present (contradiction) → FAIL  (acct-2b passes: no SIF rows, comment negates settlement)
         100004  flag=Y  no SIF tag + comment-only AR evidence → MANUAL_REVIEW
         100005  flag=Y  SIF tag + no direct AR rows           → MANUAL_REVIEW (via step insufficient_evidence)
     """
