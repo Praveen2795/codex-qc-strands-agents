@@ -281,47 +281,66 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
         checkpoint_result = normalize_agent_tool_output(
             parse_json_response_text(str(orchestrator_agent(json.dumps(demo_task))))
         )
-    except Exception:
+        logger.info(
+            "checkpoint_result=%s",
+            json.dumps(checkpoint_result, sort_keys=True, default=str),
+        )
+        _ar = checkpoint_result.get("account_result") or {}
+        logger.info(
+            "demo_workflow_completed status=%s account=%s final_decision=%s",
+            checkpoint_result.get("status"),
+            _ar.get("account_number"),
+            _ar.get("final_decision"),
+        )
+
+        # Persist per-account result immediately after the orchestrator completes.
+        _acct_ctx = _ar.get("account_context") or {}
+        _step_dec = _ar.get("step_decisions") or {}
+        _step_rea = _ar.get("step_decision_reasons") or {}
+        _persist_account_result(jsonl_path, {
+            "run_id": run_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "procedure_name": _procedure_name,
+            "batch_id": _batch_id,
+            "account_number": _ar.get("account_number"),
+            "borrower_name": _acct_ctx.get("borrower") if isinstance(_acct_ctx, dict) else None,
+            "co_borrower_name": _acct_ctx.get("co_borrower") if isinstance(_acct_ctx, dict) else None,
+            "settlement_flag": _acct_ctx.get("settlement_flag") if isinstance(_acct_ctx, dict) else None,
+            "tag_check_result": _step_dec.get("acct-1b"),
+            "tag_check_reason": _step_rea.get("acct-1b"),
+            "arlog_check_result": _step_dec.get("acct-2b"),
+            "arlog_check_reason": _step_rea.get("acct-2b"),
+            "final_qc_result": _ar.get("final_decision"),
+            "final_qc_reason": _ar.get("final_decision_reason"),
+            "status": checkpoint_result.get("status"),
+            "error_message": checkpoint_result.get("error"),
+        })
+    except Exception as exc:
         logger.exception("demo_workflow_failed")
+        _persist_account_result(jsonl_path, {
+            "run_id": run_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "procedure_name": _procedure_name,
+            "batch_id": _batch_id,
+            "account_number": None,
+            "borrower_name": None,
+            "co_borrower_name": None,
+            "settlement_flag": None,
+            "tag_check_result": None,
+            "tag_check_reason": None,
+            "arlog_check_result": None,
+            "arlog_check_reason": None,
+            "final_qc_result": None,
+            "final_qc_reason": None,
+            "status": "error",
+            "error_message": {"type": type(exc).__name__, "message": str(exc)},
+        })
         raise
-
-    logger.info(
-        "checkpoint_result=%s",
-        json.dumps(checkpoint_result, sort_keys=True, default=str),
-    )
-    _ar = checkpoint_result.get("account_result") or {}
-    logger.info(
-        "demo_workflow_completed status=%s account=%s final_decision=%s",
-        checkpoint_result.get("status"),
-        _ar.get("account_number"),
-        _ar.get("final_decision"),
-    )
-
-    # Persist per-account result immediately after the orchestrator completes.
-    _acct_ctx = _ar.get("account_context") or {}
-    _step_dec = _ar.get("step_decisions") or {}
-    _step_rea = _ar.get("step_decision_reasons") or {}
-    _persist_account_result(jsonl_path, {
-        "run_id": run_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "procedure_name": _procedure_name,
-        "batch_id": _batch_id,
-        "account_number": _ar.get("account_number"),
-        "borrower_name": _acct_ctx.get("borrower") if isinstance(_acct_ctx, dict) else None,
-        "co_borrower_name": _acct_ctx.get("co_borrower") if isinstance(_acct_ctx, dict) else None,
-        "settlement_flag": _acct_ctx.get("settlement_flag") if isinstance(_acct_ctx, dict) else None,
-        "tag_check_result": _step_dec.get("acct-1b"),
-        "tag_check_reason": _step_rea.get("acct-1b"),
-        "arlog_check_result": _step_dec.get("acct-2b"),
-        "arlog_check_reason": _step_rea.get("acct-2b"),
-        "final_qc_result": _ar.get("final_decision"),
-        "final_qc_reason": _ar.get("final_decision_reason"),
-        "status": checkpoint_result.get("status"),
-        "error_message": checkpoint_result.get("error"),
-    })
 
     return {
         "demo_request": demo_task["task_request"],
+        "procedure_name": _procedure_name,
+        "batch_id": _batch_id,
         "log_file": str(run_log_path),
         "jsonl_file": str(jsonl_path),
         "agents": {
@@ -350,9 +369,9 @@ def print_flow_trace(result: dict, *, verbose: bool = False) -> None:
 
     # ── Header ────────────────────────────────────────────────────────────────
     _section("QC FLOW — STEP-BY-STEP RESULTS")
-    _field("procedure",    cr.get("procedure_name", "?"))
+    _field("procedure",    result.get("procedure_name", "?"))
     _field("task_request", result.get("demo_request", "?"))
-    _field("batch_id",     cr.get("batch_id", "?"))
+    _field("batch_id",     result.get("batch_id", "?"))
     status_col = _GREEN if status == "completed" else _RED
     _field("status", _c(status.upper(), status_col, _BOLD))
 
