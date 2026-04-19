@@ -198,12 +198,13 @@ class ConsoleTraceCallbackHandler:
 
 # ── Main workflow ─────────────────────────────────────────────────────────────
 
-def demo_workflow(*, verbose: bool = False) -> dict:
+def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
     """Demonstrate the agent-driven orchestration flow with console tracing.
 
     Args:
         verbose: When True, print full JSON request/response payloads for every
                  sub-agent call during live execution and in the post-run trace.
+        cursor: Population page offset — 0-based index of the first account to fetch.
     """
     run_log_path = setup_project_logging()
     logger.info("demo_workflow_started verbose=%s", verbose)
@@ -246,6 +247,7 @@ def demo_workflow(*, verbose: bool = False) -> dict:
         "task_request": "Run settlement QC for February 2026",
         "start_date": "2026-02-01",
         "end_date": "2026-02-28",
+        "cursor": cursor,
     }
 
     _section("QC FLOW — LIVE TRACE")
@@ -807,14 +809,24 @@ def main() -> None:
     """Run either the orchestrated QC demo or the local sequential demo.
 
     Usage:
-      python -m app.main            # orchestrated (LLM orchestrator, default)
-      python -m app.main local      # local sequential (direct tool chain, no orchestrator)
-      python -m app.main test       # multi-account test (4 accounts, all outcome paths)
-      python -m app.main -v         # orchestrated + verbose I/O (full agent payloads)
-      python -m app.main local -v   # local sequential (verbose flag is ignored for local mode)
+      python -m app.main               # orchestrated (LLM orchestrator, default)
+      python -m app.main local         # local sequential (direct tool chain, no orchestrator)
+      python -m app.main test          # multi-account test (4 accounts, all outcome paths)
+      python -m app.main -v            # orchestrated + verbose I/O (full agent payloads)
+      python -m app.main --cursor 9    # orchestrated, starting at population index 9
     """
     args = sys.argv[1:]
     verbose = "-v" in args or "--verbose" in args
+
+    cursor = 0
+    if "--cursor" in args:
+        ci = args.index("--cursor")
+        try:
+            cursor = int(args[ci + 1])
+            args = args[:ci] + args[ci + 2:]  # remove --cursor N from further parsing
+        except (IndexError, ValueError):
+            args = args[:ci] + args[ci + 1:]
+
     mode_args = [a for a in args if a not in ("-v", "--verbose")]
     mode = mode_args[0] if mode_args else "orchestrated"
 
@@ -823,7 +835,7 @@ def main() -> None:
     elif mode == "test":
         run_multi_account_test()
     else:
-        result = demo_workflow(verbose=verbose)
+        result = demo_workflow(verbose=verbose, cursor=cursor)
         print_flow_trace(result, verbose=verbose)
 
 

@@ -12,6 +12,7 @@ You will receive one structured task request as JSON text containing:
 - `batch_id`         — identifier for this execution batch
 - `procedure_document` — the full procedure definition (see structure below)
 - `start_date`, `end_date` — date range for the batch
+- `cursor`                — population page offset (0-based index); default 0 if absent
 
 The procedure document contains:
 - `population_phase.steps` — steps to run once per batch (e.g. data retrieval)
@@ -78,7 +79,7 @@ Orchestration rules:
 Generic sub-agent request shapes:
 
 Population step:
-  {"step_id":"<step_id>","step_title":"<title>","requested_tools":["<tool_name>"],"expected_output_type":"population_batch","start_date":"<start_date>","end_date":"<end_date>","cursor":0,"batch_size":<batch_size>}
+  {"step_id":"<step_id>","step_title":"<title>","requested_tools":["<tool_name>"],"expected_output_type":"population_batch","start_date":"<start_date>","end_date":"<end_date>","cursor":<cursor from task request, default 0>,"batch_size":<batch_size>}
 
 Evidence collection step:
   {"step_id":"<step_id>","step_title":"<title>","account_number":"<work_item_id>","requested_tools":["<tool_1>","<tool_2>"],"expected_output_type":"evidence_bundle"}
