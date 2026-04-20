@@ -14,6 +14,7 @@ from strands.hooks import (
     AfterModelCallEvent,
     AfterToolCallEvent,
     BeforeInvocationEvent,
+    BeforeToolCallEvent,
     HookProvider,
     HookRegistry,
 )
@@ -240,6 +241,112 @@ class ModelCallRetryHook(HookProvider):
                 self._retry_count,
                 exc_str[:200],
                 "max retries exhausted" if self._retry_count >= self.max_retries else "non-transient",
+            )
+
+
+class ToolCallTracker(HookProvider):
+    """Track which tools were actually invoked by the qc_validation_agent per invocation.
+
+    Attaches to ``qc_validation_agent`` via its hooks list.  Resets at the start of every
+    new agent invocation (``BeforeInvocationEvent``) so each ``collect_qc_evidence`` call
+    gets a clean slate.
+
+    ``called_tools`` is read by ``EvidenceToolGuardHook`` on the orchestrator immediately
+    after ``collect_qc_evidence`` completes to confirm that every required tool ran.
+    """
+
+    def __init__(self) -> None:
+        self.called_tools: set[str] = set()
+
+    def register_hooks(self, registry: HookRegistry) -> None:
+        registry.add_callback(BeforeInvocationEvent, self._reset)
+        registry.add_callback(AfterToolCallEvent, self._record)
+
+    def _reset(self, event: BeforeInvocationEvent) -> None:  # noqa: ARG002
+        self.called_tools = set()
+
+    def _record(self, event: AfterToolCallEvent) -> None:
+        name = event.tool_use.get("name", "")
+        if name:
+            self.called_tools.add(name)
+
+
+class EvidenceToolGuardHook(HookProvider):
+    """Deterministic guard: verify every required evidence tool was actually called.
+
+    Attaches to ``orchestrator_agent``.
+
+    On ``BeforeToolCallEvent`` for ``collect_qc_evidence`` it captures the
+    ``requested_tools`` list from the JSON payload the orchestrator is sending.
+
+    On ``AfterToolCallEvent`` it cross-references that list against
+    ``ToolCallTracker.called_tools`` (the Python-level record of functions that
+    actually ran inside ``qc_validation_agent``).
+
+    If any required tool was skipped, the result content is replaced with a
+    structured error JSON so the orchestrator receives a clear failure rather than
+    silently accepting hallucinated evidence.
+    """
+
+    def __init__(self, tracker: ToolCallTracker) -> None:
+        self.tracker = tracker
+        self._pending_requested: list[str] = []
+
+    def register_hooks(self, registry: HookRegistry) -> None:
+        registry.add_callback(BeforeToolCallEvent, self._capture_requested)
+        registry.add_callback(AfterToolCallEvent, self._validate_evidence)
+
+    def _capture_requested(self, event: BeforeToolCallEvent) -> None:
+        if event.tool_use.get("name") != "collect_qc_evidence":
+            return
+        try:
+            input_dict = event.tool_use.get("input") or {}
+            input_str = input_dict.get("input", "") if isinstance(input_dict, dict) else str(input_dict)
+            payload = json.loads(input_str.strip())
+            self._pending_requested = payload.get("requested_tools", [])
+        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+            self._pending_requested = []
+
+    def _validate_evidence(self, event: AfterToolCallEvent) -> None:
+        if event.tool_use.get("name") != "collect_qc_evidence":
+            return
+        pending = self._pending_requested
+        self._pending_requested = []  # always reset, regardless of outcome
+
+        if not pending:
+            return
+
+        called = self.tracker.called_tools
+        missing = [t for t in pending if t not in called]
+
+        if missing:
+            logger.warning(
+                "evidence_tool_guard_FAIL missing=%s requested=%s called=%s",
+                missing,
+                pending,
+                sorted(called),
+            )
+            error_payload = json.dumps({
+                "error": "evidence_tool_guard_failure",
+                "missing_tools": missing,
+                "requested_tools": pending,
+                "called_tools": sorted(called),
+                "detail": (
+                    f"Evidence integrity check FAILED. "
+                    f"Required tools not called: {missing}. "
+                    "Do NOT proceed with QC decisions based on this evidence. "
+                    "Mark this account as error status."
+                ),
+            })
+            try:
+                event.result["content"][0]["text"] = error_payload
+            except (KeyError, IndexError, TypeError):
+                pass
+        else:
+            logger.info(
+                "evidence_tool_guard_OK requested=%s called=%s",
+                pending,
+                sorted(called),
             )
 
 

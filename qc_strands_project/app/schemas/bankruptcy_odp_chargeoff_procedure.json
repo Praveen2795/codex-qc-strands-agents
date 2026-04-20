@@ -81,12 +81,13 @@
         "step_id": "acct-2a",
         "step_type": "evidence_collection",
         "title": "Collect bankruptcy and charge-off timing evidence",
-        "objective": "Gather the bankruptcy notification date, charge-off notification date, and tool-computed days_to_charge_off for SLA validation.",
+        "objective": "Gather the bankruptcy notification date and charge-off date using get_bankruptcy_notification_and_chargeoff_dates, then call calculate_days_between_dates to compute the number of calendar days between them. Both tools must be called in sequence — dates first, then the day-difference calculation.",
         "preferred_agent": "qc_validation_agent",
-        "evidence_tools": ["get_bankruptcy_chargeoff_timing_evidence"],
+        "evidence_tools": ["get_bankruptcy_notification_and_chargeoff_dates", "calculate_days_between_dates"],
         "depends_on": ["pop-1"],
         "evaluation_rule_ids": [],
-        "decision_policy": null
+        "decision_policy": null,
+        "orchestration_hint": "Step 1: call get_bankruptcy_notification_and_chargeoff_dates(account_number) to retrieve bankruptcy_notification_date and charge_off_date. Step 2: call calculate_days_between_dates(start_date=bankruptcy_notification_date, end_date=charge_off_date) to compute the days_difference. The evidence bundle must include the output of both tool calls."
       },
       {
         "step_id": "acct-2b",
@@ -98,7 +99,7 @@
         "depends_on": ["pop-1", "acct-2a"],
         "evaluation_rule_ids": ["rule_chargeoff_within_sla"],
         "decision_policy": "any_fail_fails",
-        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-2a, and the rule subset (rule_chargeoff_within_sla only). The evidence will contain days_to_charge_off computed by the tool — compare against sla_days_threshold=60."
+        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-2a (which contains outputs of both get_bankruptcy_notification_and_chargeoff_dates and calculate_days_between_dates), and the rule subset (rule_chargeoff_within_sla only). The evidence_bundle will contain a check='date_difference_calculation' entry with a days_difference field — compare against sla_days_threshold=60."
       },
       {
         "step_id": "acct-3a",
@@ -143,7 +144,7 @@
       "rule_id": "rule_chargeoff_status",
       "title": "Account charged-off check",
       "description": "The account must have an explicit CHARGE OFF status code in the source used by the business process.",
-      "evidence_check": "chargeoff_status_evidence",
+      "evidence_check": "chargeoff_tag_evidence",
       "evidence_field": "expected_tag_present",
       "applies_to_step": "acct-1b",
       "allowed_decisions": ["pass", "fail", "manual_review", "error"],
@@ -155,16 +156,16 @@
     {
       "rule_id": "rule_chargeoff_within_sla",
       "title": "Charge-off within SLA",
-      "description": "The account must be charged off within 60 days of the bankruptcy notification date. The days_to_charge_off value is computed by the evidence tool from raw dates — never precomputed.",
-      "evidence_check": "chargeoff_timing_evidence",
-      "evidence_field": "days_to_charge_off",
+      "description": "The account must be charged off within 60 days of the bankruptcy notification date. The qc_validation_agent must first call get_bankruptcy_notification_and_chargeoff_dates to retrieve raw dates, then call calculate_days_between_dates to compute days_difference. The decision agent evaluates days_difference against the 60-day threshold.",
+      "evidence_check": "date_difference_calculation",
+      "evidence_field": "days_difference",
       "applies_to_step": "acct-2b",
       "allowed_decisions": ["pass", "fail", "manual_review", "error"],
       "sla_days_threshold": 60,
       "decision_matrix": [
-        {"evidence_condition": "days_to_charge_off is null",         "decision": "fail", "note": "A required date is missing — SLA cannot be assessed; treat as QC failure"},
-        {"evidence_condition": "days_to_charge_off <= 60",           "decision": "pass", "note": "Charged off within 60 days of bankruptcy notification — SLA met"},
-        {"evidence_condition": "days_to_charge_off > 60",            "decision": "fail", "note": "Charged off more than 60 days after bankruptcy notification — SLA exceeded"}
+        {"evidence_condition": "days_difference is null or calculation_successful is false", "decision": "fail", "note": "A required date is missing or the calculation failed — SLA cannot be assessed; treat as QC failure"},
+        {"evidence_condition": "days_difference <= 60",           "decision": "pass", "note": "Charged off within 60 days of bankruptcy notification — SLA met"},
+        {"evidence_condition": "days_difference > 60",            "decision": "fail", "note": "Charged off more than 60 days after bankruptcy notification — SLA exceeded"}
       ]
     },
     {

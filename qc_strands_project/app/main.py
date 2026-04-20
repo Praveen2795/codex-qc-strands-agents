@@ -26,6 +26,13 @@ from app.logging_utils import setup_project_logging, CompositeCallbackHandler
 from app.tools.arlog_tools import get_arlog_settlement_evidence
 from app.tools.settlement_review_population_tools import get_population_batch
 from app.tools.tag_tools import get_account_tag_sif_presence
+from app.tools.bankruptcy_population_tools import get_bankruptcy_population_batch
+from app.tools.bankruptcy_odp_tools import (
+    get_chargeoff_tag_evidence,
+    get_bankruptcy_notification_and_chargeoff_dates,
+    calculate_days_between_dates,
+    get_bankruptcy_tag_evidence,
+)
 
 logger = logging.getLogger("qc_strands.main")
 
@@ -132,6 +139,11 @@ class ConsoleTraceCallbackHandler:
         "get_population_batch":     ("  tool   ", _DIM),
         "get_account_tag_sif_presence": ("  tool   ", _DIM),
         "get_arlog_settlement_evidence": ("  tool   ", _DIM),
+        "get_bankruptcy_population_batch": ("  tool   ", _DIM),
+        "get_chargeoff_tag_evidence": ("  tool   ", _DIM),
+        "get_bankruptcy_notification_and_chargeoff_dates": ("  tool   ", _DIM),
+        "calculate_days_between_dates": ("  tool   ", _DIM),
+        "get_bankruptcy_tag_evidence": ("  tool   ", _DIM),
     }
 
     # Sub-agent tool names — show full payloads in verbose mode
@@ -227,12 +239,13 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
     run_id = _make_run_id()
 
     data_fetcher_agent = build_data_fetcher_agent()
-    qc_validation_agent = build_qc_validation_agent()
+    qc_validation_agent, _tool_tracker = build_qc_validation_agent()
     qc_decision_agent = build_qc_decision_agent()
     orchestrator_agent = build_orchestrator_agent(
         data_fetcher_agent,
         qc_validation_agent,
         qc_decision_agent,
+        tool_tracker=_tool_tracker,
     )
 
     # Use composite handlers so both the live console trace AND the file log
@@ -351,6 +364,161 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
         "registered_tools": {
             "data_fetcher": ["get_population_batch"],
             "qc_validation": ["get_account_tag_sif_presence", "get_arlog_settlement_evidence"],
+            "qc_decision": [],
+            "orchestrator": ["fetch_structured_qc_data", "collect_qc_evidence", "make_qc_decision"],
+        },
+        "checkpoint_result": checkpoint_result,
+    }
+
+
+# ── Bankruptcy ODP Charge Off QC workflow ─────────────────────────────────────
+
+def demo_workflow_bankruptcy_odp(*, verbose: bool = False, cursor: int = 0) -> dict:
+    """Run the Bankruptcy ODP Charge Off QC via the LLM orchestrator.
+
+    Args:
+        verbose: When True, print full JSON payloads for every sub-agent call.
+        cursor: Population page offset — 0-based index of the first account to fetch.
+    """
+    run_log_path = setup_project_logging("bankruptcy_odp_qc")
+    logger.info("demo_workflow_bankruptcy_odp_started verbose=%s cursor=%s", verbose, cursor)
+
+    jsonl_path = run_log_path.with_suffix(".jsonl")
+    _reset_jsonl(jsonl_path)
+    run_id = _make_run_id()
+
+    data_fetcher_agent = build_data_fetcher_agent(tools=[get_bankruptcy_population_batch])
+    qc_validation_agent, _tool_tracker = build_qc_validation_agent(tools=[
+        get_chargeoff_tag_evidence,
+        get_bankruptcy_notification_and_chargeoff_dates,
+        calculate_days_between_dates,
+        get_bankruptcy_tag_evidence,
+    ])
+    qc_decision_agent = build_qc_decision_agent()
+    orchestrator_agent = build_orchestrator_agent(
+        data_fetcher_agent,
+        qc_validation_agent,
+        qc_decision_agent,
+        tool_tracker=_tool_tracker,
+    )
+
+    from app.logging_utils import create_agent_callback_handler
+    def _cb(name: str) -> CompositeCallbackHandler:
+        return CompositeCallbackHandler(
+            ConsoleTraceCallbackHandler(name, verbose=verbose),
+            create_agent_callback_handler(name),
+        )
+
+    data_fetcher_agent.callback_handler  = _cb("data_fetcher_agent")
+    qc_validation_agent.callback_handler = _cb("qc_validation_agent")
+    qc_decision_agent.callback_handler   = _cb("qc_decision_agent")
+    orchestrator_agent.callback_handler  = _cb("orchestrator_agent")
+
+    procedure = load_schema_json("bankruptcy_odp_chargeoff_procedure.json")
+    _procedure_name = procedure["procedure_name"]
+    _batch_id = "batch-bk-001"
+    demo_task: dict[str, object] = {
+        "qc_name": procedure["qc_name"],
+        "procedure_document": procedure,
+        "task_request": "Run Bankruptcy ODP Charge Off QC for January 2026",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "cursor": cursor,
+    }
+
+    _section("QC FLOW — LIVE TRACE")
+    print(f"  procedure : {_c(_procedure_name, _BOLD)}")
+    print(f"  qc_name   : {_c(procedure['qc_name'], _BOLD)}")
+    print(f"  request   : {_c(str(demo_task['task_request']), _BOLD)}")
+    print(f"  batch_id  : {_c(_batch_id, _BOLD)}")
+    print()
+    print(_c("  Tool call trace:", _DIM))
+    print(_hr())
+
+    logger.info("demo_task=%s", json.dumps(demo_task, sort_keys=True))
+    try:
+        checkpoint_result = normalize_agent_tool_output(
+            parse_json_response_text(str(orchestrator_agent(json.dumps(demo_task))))
+        )
+        logger.info(
+            "checkpoint_result=%s",
+            json.dumps(checkpoint_result, sort_keys=True, default=str),
+        )
+        _ar = checkpoint_result.get("account_result") or {}
+        logger.info(
+            "demo_workflow_bankruptcy_odp_completed status=%s account=%s final_decision=%s",
+            checkpoint_result.get("status"),
+            _ar.get("account_number"),
+            _ar.get("final_decision"),
+        )
+
+        _acct_ctx = _ar.get("account_context") or {}
+        _step_dec = _ar.get("step_decisions") or {}
+        _step_rea = _ar.get("step_decision_reasons") or {}
+        _persist_account_result(jsonl_path, {
+            "run_id": run_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "procedure_name": _procedure_name,
+            "batch_id": _batch_id,
+            "account_number": _ar.get("account_number"),
+            "borrower_name": _acct_ctx.get("borrower_name") if isinstance(_acct_ctx, dict) else None,
+            "co_borrower_name": _acct_ctx.get("co_borrower_name") if isinstance(_acct_ctx, dict) else None,
+            "bankruptcy_chapter": _acct_ctx.get("bankruptcy_chapter") if isinstance(_acct_ctx, dict) else None,
+            "account_charged_off_result": _step_dec.get("acct-1b"),
+            "account_charged_off_reason": _step_rea.get("acct-1b"),
+            "within_sla_result": _step_dec.get("acct-2b"),
+            "within_sla_reason": _step_rea.get("acct-2b"),
+            "account_tagged_to_bankruptcy_result": _step_dec.get("acct-3b"),
+            "account_tagged_to_bankruptcy_reason": _step_rea.get("acct-3b"),
+            "final_qc_result": _ar.get("final_decision"),
+            "final_qc_reason": _ar.get("final_decision_reason"),
+            "status": checkpoint_result.get("status"),
+            "error_message": checkpoint_result.get("error"),
+        })
+    except Exception as exc:
+        logger.exception("demo_workflow_bankruptcy_odp_failed")
+        _persist_account_result(jsonl_path, {
+            "run_id": run_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "procedure_name": _procedure_name,
+            "batch_id": _batch_id,
+            "account_number": None,
+            "borrower_name": None,
+            "co_borrower_name": None,
+            "bankruptcy_chapter": None,
+            "account_charged_off_result": None,
+            "account_charged_off_reason": None,
+            "within_sla_result": None,
+            "within_sla_reason": None,
+            "account_tagged_to_bankruptcy_result": None,
+            "account_tagged_to_bankruptcy_reason": None,
+            "final_qc_result": None,
+            "final_qc_reason": None,
+            "status": "error",
+            "error_message": {"type": type(exc).__name__, "message": str(exc)},
+        })
+        raise
+
+    return {
+        "demo_request": demo_task["task_request"],
+        "procedure_name": _procedure_name,
+        "batch_id": _batch_id,
+        "log_file": str(run_log_path),
+        "jsonl_file": str(jsonl_path),
+        "agents": {
+            "orchestrator": orchestrator_agent.name,
+            "data_fetcher": data_fetcher_agent.name,
+            "qc_validation": qc_validation_agent.name,
+            "qc_decision": qc_decision_agent.name,
+        },
+        "registered_tools": {
+            "data_fetcher": ["get_bankruptcy_population_batch"],
+            "qc_validation": [
+                "get_chargeoff_tag_evidence",
+                "get_bankruptcy_notification_and_chargeoff_dates",
+                "calculate_days_between_dates",
+                "get_bankruptcy_tag_evidence",
+            ],
             "qc_decision": [],
             "orchestrator": ["fetch_structured_qc_data", "collect_qc_evidence", "make_qc_decision"],
         },
@@ -852,11 +1020,13 @@ def main() -> None:
     """Run either the orchestrated QC demo or the local sequential demo.
 
     Usage:
-      python -m app.main               # orchestrated (LLM orchestrator, default)
+      python -m app.main               # orchestrated (LLM orchestrator, QC1 default)
+      python -m app.main bk            # orchestrated, Bankruptcy ODP Charge Off QC (QC2)
       python -m app.main local         # local sequential (direct tool chain, no orchestrator)
       python -m app.main test          # multi-account test (4 accounts, all outcome paths)
       python -m app.main -v            # orchestrated + verbose I/O (full agent payloads)
       python -m app.main --cursor 9    # orchestrated, starting at population index 9
+      python -m app.main bk -v --cursor 0  # QC2 verbose, first account
     """
     args = sys.argv[1:]
     verbose = "-v" in args or "--verbose" in args
@@ -877,6 +1047,9 @@ def main() -> None:
         run_local_sequential_demo()
     elif mode == "test":
         run_multi_account_test()
+    elif mode == "bk":
+        result = demo_workflow_bankruptcy_odp(verbose=verbose, cursor=cursor)
+        print_flow_trace(result, verbose=verbose)
     else:
         result = demo_workflow(verbose=verbose, cursor=cursor)
         print_flow_trace(result, verbose=verbose)

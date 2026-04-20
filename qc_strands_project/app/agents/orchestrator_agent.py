@@ -8,7 +8,14 @@ from typing import Any
 from strands import Agent
 
 from app.config import load_prompt
-from app.logging_utils import ModelCallRetryHook, OrchestratorOutputRecoveryHook, SubAgentResponseValidationHook, create_agent_callback_handler
+from app.logging_utils import (
+    EvidenceToolGuardHook,
+    ModelCallRetryHook,
+    OrchestratorOutputRecoveryHook,
+    SubAgentResponseValidationHook,
+    ToolCallTracker,
+    create_agent_callback_handler,
+)
 from app.models.factory import build_default_agent_model
 
 logger = logging.getLogger("qc_strands.agents.orchestrator")
@@ -27,6 +34,7 @@ def build_orchestrator_agent(
     tools: list[Any] | None = None,
     system_prompt: str | None = None,
     model: Any | None = None,
+    tool_tracker: ToolCallTracker | None = None,
 ) -> Agent:
     """Build the reusable orchestrator agent.
 
@@ -57,6 +65,14 @@ def build_orchestrator_agent(
         "building_agent name=orchestrator_agent tools=%s",
         [getattr(tool, "tool_name", getattr(tool, "__name__", str(tool))) for tool in orchestrator_tools],
     )
+    orch_hooks: list[Any] = [
+        SubAgentResponseValidationHook(),
+        ModelCallRetryHook(max_retries=3),
+        OrchestratorOutputRecoveryHook(max_resumes=2),
+    ]
+    if tool_tracker is not None:
+        orch_hooks.append(EvidenceToolGuardHook(tool_tracker))
+
     return Agent(
         name="orchestrator_agent",
         description=DEFAULT_ORCHESTRATOR_DESCRIPTION,
@@ -64,9 +80,5 @@ def build_orchestrator_agent(
         system_prompt=system_prompt or load_prompt("orchestrator_prompt.txt"),
         tools=orchestrator_tools,
         callback_handler=create_agent_callback_handler("orchestrator_agent"),
-        hooks=[
-            SubAgentResponseValidationHook(),
-            ModelCallRetryHook(max_retries=3),
-            OrchestratorOutputRecoveryHook(max_resumes=2),
-        ],
+        hooks=orch_hooks,
     )
