@@ -249,7 +249,7 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
     qc_decision_agent.callback_handler   = _cb("qc_decision_agent")
     orchestrator_agent.callback_handler  = _cb("orchestrator_agent")
 
-    sample_procedure = load_schema_json("sample_procedure.json")
+    sample_procedure = load_schema_json("internal_recovery_potential_settlements_procedure.json")
     # procedure_name and batch_id are administrative metadata — not needed for
     # QC reasoning. Kept in Python only; never sent to the LLM.
     _procedure_name = sample_procedure["procedure_name"]
@@ -493,7 +493,7 @@ def run_local_sequential_demo() -> dict:
     _reset_jsonl(jsonl_path)
     run_id = _make_run_id()
 
-    sample_procedure = load_schema_json("sample_procedure.json")
+    sample_procedure = load_schema_json("internal_recovery_potential_settlements_procedure.json")
     evaluation_rules = sample_procedure.get("evaluation_rules", [])
     rules_by_id = {r["rule_id"]: r for r in evaluation_rules}
 
@@ -693,7 +693,7 @@ def run_multi_account_test() -> list[dict]:
     _reset_jsonl(jsonl_path)
     run_id = _make_run_id()
 
-    sample_procedure = load_schema_json("sample_procedure.json")
+    sample_procedure = load_schema_json("internal_recovery_potential_settlements_procedure.json")
     evaluation_rules = sample_procedure.get("evaluation_rules", [])
     rules_by_id = {r["rule_id"]: r for r in evaluation_rules}
 

@@ -1,0 +1,245 @@
+{
+  "qc_name": "bankruptcy_odp_charge_off_qc",
+  "procedure_name": "Bankruptcy ODP Charge Off QC Procedure",
+  "description": "Validate that ODP bankruptcy accounts are properly charged off, charged off within SLA, and tagged correctly for bankruptcy.",
+  "unit_of_work": "account",
+  "orchestration_mode": "dynamic",
+
+  "agents": [
+    {
+      "role": "data_fetcher_agent",
+      "purpose": "Retrieves structured population batches of bankruptcy ODP accounts. Performs no QC judgment.",
+      "tool_name": "fetch_structured_qc_data"
+    },
+    {
+      "role": "qc_validation_agent",
+      "purpose": "Gathers raw evidence for one account using registered evidence tools. Returns evidence only.",
+      "tool_name": "collect_qc_evidence"
+    },
+    {
+      "role": "qc_decision_agent",
+      "purpose": "Evaluates evidence and rules to produce step-level or final-level QC decisions. Does not retrieve data.",
+      "tool_name": "make_qc_decision"
+    }
+  ],
+
+  "population_phase": {
+    "description": "Retrieve the bankruptcy ODP accounts to be reviewed. The orchestrator runs this phase once per batch before entering the account phase.",
+    "steps": [
+      {
+        "step_id": "pop-1",
+        "step_type": "data_retrieval",
+        "title": "Load bankruptcy ODP population batch",
+        "objective": "Retrieve a paginated batch of bankruptcy ODP accounts in scope for this QC run.",
+        "preferred_agent": "data_fetcher_agent",
+        "required_output_fields": [
+          "account_number",
+          "borrower_name",
+          "co_borrower_name",
+          "bankruptcy_chapter",
+          "balance",
+          "reason",
+          "as_of_date"
+        ],
+        "evidence_tools": ["get_bankruptcy_population_batch"],
+        "depends_on": [],
+        "evaluation_rule_ids": [],
+        "decision_policy": null
+      }
+    ]
+  },
+
+  "account_phase": {
+    "description": "For each account in the population batch, the orchestrator runs evidence collection, then step-level decisions, then the final account decision. Steps are driven by depends_on and step_type — the orchestrator must not hardcode a fixed sequence.",
+    "iteration": "per_account",
+    "steps": [
+      {
+        "step_id": "acct-1a",
+        "step_type": "evidence_collection",
+        "title": "Collect charge-off status evidence",
+        "objective": "Gather evidence showing whether the account has an explicit charge-off status code in the source system.",
+        "preferred_agent": "qc_validation_agent",
+        "evidence_tools": ["get_chargeoff_status_evidence"],
+        "depends_on": ["pop-1"],
+        "evaluation_rule_ids": [],
+        "decision_policy": null,
+        "checkpoint_note": "In checkpoint scope, run for the first account only."
+      },
+      {
+        "step_id": "acct-1b",
+        "step_type": "step_decision",
+        "title": "Evaluate account charged-off check",
+        "objective": "Apply rule_chargeoff_status to the charge-off status evidence collected in acct-1a. Return a step-level decision.",
+        "preferred_agent": "qc_decision_agent",
+        "evidence_tools": [],
+        "depends_on": ["pop-1", "acct-1a"],
+        "evaluation_rule_ids": ["rule_chargeoff_status"],
+        "decision_policy": "any_fail_fails",
+        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-1a, and the rule subset for evaluation_rule_ids (rule_chargeoff_status only)."
+      },
+      {
+        "step_id": "acct-2a",
+        "step_type": "evidence_collection",
+        "title": "Collect bankruptcy and charge-off timing evidence",
+        "objective": "Gather the bankruptcy notification date, charge-off notification date, and tool-computed days_to_charge_off for SLA validation.",
+        "preferred_agent": "qc_validation_agent",
+        "evidence_tools": ["get_bankruptcy_chargeoff_timing_evidence"],
+        "depends_on": ["pop-1"],
+        "evaluation_rule_ids": [],
+        "decision_policy": null
+      },
+      {
+        "step_id": "acct-2b",
+        "step_type": "step_decision",
+        "title": "Evaluate charge-off timeliness check",
+        "objective": "Apply rule_chargeoff_within_sla to the timing evidence from acct-2a. Return a step-level decision.",
+        "preferred_agent": "qc_decision_agent",
+        "evidence_tools": [],
+        "depends_on": ["pop-1", "acct-2a"],
+        "evaluation_rule_ids": ["rule_chargeoff_within_sla"],
+        "decision_policy": "any_fail_fails",
+        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-2a, and the rule subset (rule_chargeoff_within_sla only). The evidence will contain days_to_charge_off computed by the tool — compare against sla_days_threshold=60."
+      },
+      {
+        "step_id": "acct-3a",
+        "step_type": "evidence_collection",
+        "title": "Collect bankruptcy tag evidence",
+        "objective": "Gather evidence showing whether the expected bankruptcy tag is present for the account.",
+        "preferred_agent": "qc_validation_agent",
+        "evidence_tools": ["get_bankruptcy_tag_evidence"],
+        "depends_on": ["pop-1"],
+        "evaluation_rule_ids": [],
+        "decision_policy": null
+      },
+      {
+        "step_id": "acct-3b",
+        "step_type": "step_decision",
+        "title": "Evaluate bankruptcy tag check",
+        "objective": "Apply rule_bankruptcy_tag to the tag evidence from acct-3a. Return a step-level decision.",
+        "preferred_agent": "qc_decision_agent",
+        "evidence_tools": [],
+        "depends_on": ["pop-1", "acct-3a"],
+        "evaluation_rule_ids": ["rule_bankruptcy_tag"],
+        "decision_policy": "any_fail_fails",
+        "orchestration_hint": "Call make_qc_decision with decision_mode=step_decision. Pass account_context, evidence_bundle from acct-3a, and the rule subset (rule_bankruptcy_tag only). Check expected_tag_present against expected_tag_value 'Confirmed BK via Scrub'."
+      },
+      {
+        "step_id": "acct-4",
+        "step_type": "final_decision",
+        "title": "Determine final QC verdict for account",
+        "objective": "Aggregate step decisions from acct-1b, acct-2b, and acct-3b into one final QC verdict for the account.",
+        "preferred_agent": "qc_decision_agent",
+        "evidence_tools": [],
+        "depends_on": ["acct-1b", "acct-2b", "acct-3b"],
+        "evaluation_rule_ids": ["rule_final_aggregation"],
+        "decision_policy": "any_fail_fails_any_manual_review_manual_review",
+        "orchestration_hint": "Call make_qc_decision with decision_mode=final_decision. Pass account_context, step_decisions=[acct-1b result, acct-2b result, acct-3b result], and evaluation_rules for rule_final_aggregation."
+      }
+    ]
+  },
+
+  "evaluation_rules": [
+    {
+      "rule_id": "rule_chargeoff_status",
+      "title": "Account charged-off check",
+      "description": "The account must have an explicit CHARGE OFF status code in the source used by the business process.",
+      "evidence_check": "chargeoff_status_evidence",
+      "evidence_field": "chargeoff_found",
+      "applies_to_step": "acct-1b",
+      "allowed_decisions": ["pass", "fail", "manual_review", "error"],
+      "decision_matrix": [
+        {"evidence_value": true,  "decision": "pass", "note": "Account has CHARGE OFF status code — check passes"},
+        {"evidence_value": false, "decision": "fail", "note": "Account does not have CHARGE OFF status code — QC failure"}
+      ]
+    },
+    {
+      "rule_id": "rule_chargeoff_within_sla",
+      "title": "Charge-off within SLA",
+      "description": "The account must be charged off within 60 days of the bankruptcy notification date. The days_to_charge_off value is computed by the evidence tool from raw dates — never precomputed.",
+      "evidence_check": "chargeoff_timing_evidence",
+      "evidence_field": "days_to_charge_off",
+      "applies_to_step": "acct-2b",
+      "allowed_decisions": ["pass", "fail", "manual_review", "error"],
+      "sla_days_threshold": 60,
+      "decision_matrix": [
+        {"evidence_condition": "days_to_charge_off is null",         "decision": "fail", "note": "A required date is missing — SLA cannot be assessed; treat as QC failure"},
+        {"evidence_condition": "days_to_charge_off <= 60",           "decision": "pass", "note": "Charged off within 60 days of bankruptcy notification — SLA met"},
+        {"evidence_condition": "days_to_charge_off > 60",            "decision": "fail", "note": "Charged off more than 60 days after bankruptcy notification — SLA exceeded"}
+      ]
+    },
+    {
+      "rule_id": "rule_bankruptcy_tag",
+      "title": "Bankruptcy tag check",
+      "description": "The account must be tagged with exactly 'Confirmed BK via Scrub'. Other BK-related tags are not sufficient.",
+      "evidence_check": "bankruptcy_tag_evidence",
+      "evidence_field": "expected_tag_present",
+      "applies_to_step": "acct-3b",
+      "allowed_decisions": ["pass", "fail", "manual_review", "error"],
+      "expected_tag_value": "Confirmed BK via Scrub",
+      "decision_matrix": [
+        {"evidence_value": true,  "decision": "pass", "note": "Expected tag 'Confirmed BK via Scrub' is present — check passes"},
+        {"evidence_value": false, "decision": "fail", "note": "Expected tag 'Confirmed BK via Scrub' is not present — QC failure"}
+      ]
+    },
+    {
+      "rule_id": "rule_final_aggregation",
+      "title": "Final verdict aggregation",
+      "description": "Aggregates the three step-level decisions into one final account verdict. Apply the aggregation policy defined in the prompt.",
+      "evidence_check": null,
+      "evidence_field": null,
+      "applies_to_step": "acct-4",
+      "allowed_decisions": ["pass", "fail", "manual_review"]
+    }
+  ],
+
+  "decision_policy": {
+    "step_decisions_enabled": true,
+    "final_decision_enabled": true,
+    "dynamic_decision_invocation": true,
+    "description": "The orchestrator may call the decision agent dynamically whenever sufficient evidence exists for a step. Step decisions are not batched — they are triggered per account as soon as the required depends_on steps are complete. The final decision is triggered after all three step decisions are complete.",
+    "step_aggregation_policy": "any_fail_fails",
+    "final_aggregation_policy": "any_fail_fails_any_manual_review_manual_review",
+    "allowed_step_outcomes": ["pass", "fail", "manual_review", "error"],
+    "allowed_final_outcomes": ["pass", "fail", "manual_review"]
+  },
+
+  "result_schema": {
+    "description": "Defines the expected fields of each per-account QC result produced by the orchestrator. The orchestrator must populate all account_level_fields for every successfully processed account.",
+    "account_level_fields": [
+      {"field": "account_number",                        "type": "string", "description": "The account identifier from the population phase."},
+      {"field": "account_context",                       "type": "object", "description": "Full account context from the population output. Must include: account_number, borrower_name, co_borrower_name, bankruptcy_chapter, balance, reason, as_of_date."},
+      {"field": "step_outputs",                          "type": "object", "description": "Keyed by step_id. Contains the raw evidence bundle returned by each evidence_collection step."},
+      {"field": "step_decisions",                        "type": "object", "description": "Keyed by step_id. Contains the decision string (pass / fail / manual_review / error) for each step_decision step. Does NOT include the final_decision step."},
+      {"field": "step_decision_reasons",                 "type": "object", "description": "Keyed by step_id. Contains one concise reason string for each step_decision step."},
+      {"field": "account_charged_off_result",            "type": "string", "description": "Step decision from acct-1b — whether the account is marked as charged off. Values: pass, fail, manual_review, error."},
+      {"field": "account_charged_off_reason",            "type": "string", "description": "Reason from acct-1b step decision."},
+      {"field": "within_sla_result",                     "type": "string", "description": "Step decision from acct-2b — whether the account was charged off within the 60-day SLA. Values: pass, fail, manual_review, error."},
+      {"field": "within_sla_reason",                     "type": "string", "description": "Reason from acct-2b step decision."},
+      {"field": "account_tagged_to_bankruptcy_result",   "type": "string", "description": "Step decision from acct-3b — whether the account is tagged with 'Confirmed BK via Scrub'. Values: pass, fail, manual_review, error."},
+      {"field": "account_tagged_to_bankruptcy_reason",   "type": "string", "description": "Reason from acct-3b step decision."},
+      {"field": "final_decision",                        "type": "string", "description": "Aggregated final verdict from acct-4. Allowed values: pass, fail, manual_review."},
+      {"field": "final_decision_reason",                 "type": "string", "description": "Concise plain-text explanation of the final verdict."}
+    ],
+    "execution_status": {
+      "field": "status",
+      "allowed_values": ["completed", "error"],
+      "note": "manual_review must only appear inside final_decision or step_decisions. It must never be used as execution status. System status and business decision are always separate."
+    },
+    "error_schema": {
+      "description": "Populated only when status is error. Never populated on a completed run.",
+      "fields": [
+        {"field": "type",    "description": "Short error class identifier (e.g. tool_failure, schema_error, timeout)."},
+        {"field": "message", "description": "Human-readable explanation of what went wrong."},
+        {"field": "step_id", "description": "The step_id at which the failure occurred, if known. Omit if not applicable."}
+      ]
+    }
+  },
+
+  "checkpoint_scope": {
+    "description": "Limits for local testing and flow validation. Not for production use.",
+    "max_population_batches": 1,
+    "max_accounts_to_process": 1,
+    "selection_rule": "process the first account in the first batch only",
+    "batch_size": 2
+  }
+}

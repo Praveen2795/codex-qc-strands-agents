@@ -20,7 +20,7 @@ The current implementation is intentionally limited to local execution and place
 - `app/agents/` contains the orchestrator, data fetcher, and QC validation agents
 - `app/tools/` contains placeholder Strands tools for population, tag, and AR log evidence
 - `app/prompts/` contains narrow role-based prompts
-- `app/schemas/sample_procedure.json` contains the sample procedure used by the local demo
+- `app/schemas/internal_recovery_potential_settlements_procedure.json` contains the procedure used by the local demo
 - `app/schemas/response_examples.py` contains shared response models and placeholder schema notes
 
 ## Phase-1 Thin Wrappers
@@ -86,7 +86,7 @@ Everything else â€” orchestration, decision logic, aggregation, output schema â€
 
 Create a new file in `app/schemas/`, e.g. `app/schemas/charge_off_review_procedure.json`.
 
-The procedure must follow the same structure as `app/schemas/sample_procedure.json`. The required top-level sections are:
+The procedure must follow the same structure as `app/schemas/internal_recovery_potential_settlements_procedure.json`. The required top-level sections are:
 
 | Section | What to fill in |
 |---|---|
