@@ -222,21 +222,34 @@ class ConsoleTraceCallbackHandler:
 
 # ── Main workflow ─────────────────────────────────────────────────────────────
 
-def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
-    """Demonstrate the agent-driven orchestration flow with console tracing.
+def demo_workflow(
+    *,
+    verbose: bool = False,
+    cursor: int = 0,
+    _shared_jsonl: Path | None = None,
+    _run_id: str | None = None,
+) -> dict:
+    """Run the Settlements QC via the LLM orchestrator.
 
     Args:
         verbose: When True, print full JSON request/response payloads for every
                  sub-agent call during live execution and in the post-run trace.
         cursor: Population page offset — 0-based index of the first account to fetch.
+        _shared_jsonl: When supplied by a multi-cursor loop, write results to this
+            pre-reset file instead of creating and resetting a per-run file.
+        _run_id: Shared run ID to use when called from a multi-cursor loop.
     """
-    run_log_path = setup_project_logging()
+    run_log_path = setup_project_logging("settlements_qc")
     logger.info("demo_workflow_started verbose=%s", verbose)
     logger.info("demo_model_mode=local_deterministic")
 
-    jsonl_path = run_log_path.with_suffix(".jsonl")
-    _reset_jsonl(jsonl_path)
-    run_id = _make_run_id()
+    if _shared_jsonl is not None:
+        jsonl_path = _shared_jsonl
+    else:
+        jsonl_path = run_log_path.with_suffix(".jsonl")
+        _reset_jsonl(jsonl_path)
+
+    run_id = _run_id or _make_run_id()
 
     data_fetcher_agent = build_data_fetcher_agent()
     qc_validation_agent, _tool_tracker = build_qc_validation_agent()
@@ -373,19 +386,33 @@ def demo_workflow(*, verbose: bool = False, cursor: int = 0) -> dict:
 
 # ── Bankruptcy ODP Charge Off QC workflow ─────────────────────────────────────
 
-def demo_workflow_bankruptcy_odp(*, verbose: bool = False, cursor: int = 0) -> dict:
+def demo_workflow_bankruptcy_odp(
+    *,
+    verbose: bool = False,
+    cursor: int = 0,
+    _shared_jsonl: Path | None = None,
+    _run_id: str | None = None,
+) -> dict:
     """Run the Bankruptcy ODP Charge Off QC via the LLM orchestrator.
 
     Args:
         verbose: When True, print full JSON payloads for every sub-agent call.
         cursor: Population page offset — 0-based index of the first account to fetch.
+        _shared_jsonl: When supplied by a multi-cursor loop, write results to this
+            pre-reset file instead of creating and resetting a per-run file.
+        _run_id: Shared run ID to use when called from a multi-cursor loop.
     """
-    run_log_path = setup_project_logging("bankruptcy_odp_qc")
+    run_log_path = setup_project_logging("bk_odp_chargeoff_qc")
     logger.info("demo_workflow_bankruptcy_odp_started verbose=%s cursor=%s", verbose, cursor)
 
-    jsonl_path = run_log_path.with_suffix(".jsonl")
-    _reset_jsonl(jsonl_path)
-    run_id = _make_run_id()
+    if _shared_jsonl is not None:
+        jsonl_path = _shared_jsonl
+        # Caller already reset the file; do not truncate it again.
+    else:
+        jsonl_path = run_log_path.with_suffix(".jsonl")
+        _reset_jsonl(jsonl_path)
+
+    run_id = _run_id or _make_run_id()
 
     data_fetcher_agent = build_data_fetcher_agent(tools=[get_bankruptcy_population_batch])
     qc_validation_agent, _tool_tracker = build_qc_validation_agent(tools=[
@@ -654,7 +681,7 @@ def run_local_sequential_demo() -> dict:
       acct-2b → run_qc_decision_agent_wrapper       (rule_arlog_direct + conditional rule_arlog_comment)
       acct-3  → run_qc_decision_agent_wrapper       (final aggregation)
     """
-    run_log_path = setup_project_logging("local_sequential_demo")
+    run_log_path = setup_project_logging("settlements_qc_local_demo")
     logger.info("local_sequential_demo_started")
 
     jsonl_path = run_log_path.with_suffix(".jsonl")
@@ -854,7 +881,7 @@ def run_multi_account_test() -> list[dict]:
         100004  flag=Y  no SIF tag + comment-only AR evidence → MANUAL_REVIEW
         100005  flag=Y  SIF tag + no direct AR rows           → MANUAL_REVIEW (via step insufficient_evidence)
     """
-    run_log_path = setup_project_logging("multi_account_test")
+    run_log_path = setup_project_logging("settlements_qc_multi_account")
     logger.info("multi_account_test_started accounts=%d", len(_TEST_ACCOUNTS))
 
     jsonl_path = run_log_path.with_suffix(".jsonl")
@@ -1014,19 +1041,157 @@ def run_multi_account_test() -> list[dict]:
     return results
 
 
+# ── Full-population Settlements run ──────────────────────────────────────────
+
+def run_settlements_full_population(*, verbose: bool = False, total_accounts: int = 16) -> list[dict]:
+    """Run the Settlements QC over every account in the population (cursors 0..N-1).
+
+    All results land in a single JSONL file that is reset once at the start of
+    each invocation, so re-running always gives a clean file with the latest output.
+
+    Args:
+        verbose: Passed through to each per-cursor run.
+        total_accounts: Number of cursors to iterate (default 16 = full population).
+    """
+    from app.config import LOGS_DIR
+
+    jsonl_path = LOGS_DIR / "settlements_qc_multi_account.jsonl"
+    _reset_jsonl(jsonl_path)
+    run_id = _make_run_id()
+
+    _section(f"SETTLEMENTS FULL-POPULATION RUN  ·  {total_accounts} accounts  ·  run_id={run_id}")
+    print(f"  results → {_c(str(jsonl_path), _DIM)}")
+    print()
+
+    results = []
+    for cursor in range(total_accounts):
+        print(_c(f"  ── cursor {cursor} ──────────────────────────────────────────────────", _CYAN))
+        try:
+            result = demo_workflow(
+                verbose=verbose,
+                cursor=cursor,
+                _shared_jsonl=jsonl_path,
+                _run_id=run_id,
+            )
+            cr = result.get("checkpoint_result", {})
+            ar = cr.get("account_result") or {}
+            dec = ar.get("final_decision", "?")
+            col = _decision_colour(str(dec))
+            acct = ar.get("account_number", "?")
+            print(
+                f"  cursor {cursor}  acct={_c(acct, _BOLD)}"
+                f"  final={_c(str(dec).upper(), col, _BOLD)}"
+            )
+            results.append(result)
+        except Exception as exc:  # noqa: BLE001
+            print(_c(f"  cursor {cursor} ERROR: {exc}", _RED, _BOLD))
+            results.append({"cursor": cursor, "error": str(exc)})
+
+    n_pass = sum(
+        1 for r in results
+        if (r.get("checkpoint_result") or {}).get("account_result", {}).get("final_decision") == "pass"
+    )
+    n_fail = sum(
+        1 for r in results
+        if (r.get("checkpoint_result") or {}).get("account_result", {}).get("final_decision") == "fail"
+    )
+    n_err = sum(1 for r in results if "error" in r)
+
+    _section("FULL-POPULATION SUMMARY")
+    print(f"  total    : {total_accounts}")
+    print(f"  pass     : {_c(n_pass, _GREEN, _BOLD)}")
+    print(f"  fail     : {_c(n_fail, _RED, _BOLD)}")
+    print(f"  errors   : {_c(n_err, _YELLOW, _BOLD) if n_err else _c(0, _DIM)}")
+    print(f"  results  → {_c(str(jsonl_path), _DIM)}")
+    print()
+    print(_hr())
+    return results
+
+
+# ── Full-population BK run ────────────────────────────────────────────────────
+
+def run_bk_full_population(*, verbose: bool = False, total_accounts: int = 10) -> list[dict]:
+    """Run the Bankruptcy ODP QC over every account in the population (cursors 0..N-1).
+
+    All results land in a single JSONL file that is reset once at the start of
+    each invocation, so re-running always gives a clean file with the latest output.
+
+    Args:
+        verbose: Passed through to each per-cursor run.
+        total_accounts: Number of cursors to iterate (default 10 = full population).
+    """
+    from app.config import LOGS_DIR
+
+    jsonl_path = LOGS_DIR / "bk_odp_chargeoff_qc_multi_account.jsonl"
+    _reset_jsonl(jsonl_path)
+    run_id = _make_run_id()
+
+    _section(f"BK FULL-POPULATION RUN  ·  {total_accounts} accounts  ·  run_id={run_id}")
+    print(f"  results → {_c(str(jsonl_path), _DIM)}")
+    print()
+
+    results = []
+    for cursor in range(total_accounts):
+        print(_c(f"  ── cursor {cursor} ──────────────────────────────────────────────────", _CYAN))
+        try:
+            result = demo_workflow_bankruptcy_odp(
+                verbose=verbose,
+                cursor=cursor,
+                _shared_jsonl=jsonl_path,
+                _run_id=run_id,
+            )
+            cr = result.get("checkpoint_result", {})
+            ar = cr.get("account_result") or {}
+            dec = ar.get("final_decision", "?")
+            col = _decision_colour(str(dec))
+            acct = ar.get("account_number", "?")
+            print(
+                f"  cursor {cursor}  acct={_c(acct, _BOLD)}"
+                f"  final={_c(str(dec).upper(), col, _BOLD)}"
+            )
+            results.append(result)
+        except Exception as exc:  # noqa: BLE001
+            print(_c(f"  cursor {cursor} ERROR: {exc}", _RED, _BOLD))
+            results.append({"cursor": cursor, "error": str(exc)})
+
+    n_pass = sum(
+        1 for r in results
+        if (r.get("checkpoint_result") or {}).get("account_result", {}).get("final_decision") == "pass"
+    )
+    n_fail = sum(
+        1 for r in results
+        if (r.get("checkpoint_result") or {}).get("account_result", {}).get("final_decision") == "fail"
+    )
+    n_err  = sum(1 for r in results if "error" in r)
+
+    _section("FULL-POPULATION SUMMARY")
+    print(f"  total    : {total_accounts}")
+    print(f"  pass     : {_c(n_pass, _GREEN, _BOLD)}")
+    print(f"  fail     : {_c(n_fail, _RED, _BOLD)}")
+    print(f"  errors   : {_c(n_err, _YELLOW, _BOLD) if n_err else _c(0, _DIM)}")
+    print(f"  results  → {_c(str(jsonl_path), _DIM)}")
+    print()
+    print(_hr())
+    return results
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
     """Run either the orchestrated QC demo or the local sequential demo.
 
     Usage:
-      python -m app.main               # orchestrated (LLM orchestrator, QC1 default)
-      python -m app.main bk            # orchestrated, Bankruptcy ODP Charge Off QC (QC2)
-      python -m app.main local         # local sequential (direct tool chain, no orchestrator)
-      python -m app.main test          # multi-account test (4 accounts, all outcome paths)
-      python -m app.main -v            # orchestrated + verbose I/O (full agent payloads)
-      python -m app.main --cursor 9    # orchestrated, starting at population index 9
-      python -m app.main bk -v --cursor 0  # QC2 verbose, first account
+      python -m app.main                         # Settlements QC, single account (cursor 0)
+      python -m app.main --cursor 3              # Settlements QC, single account (cursor 3)
+      python -m app.main settlements-all         # Settlements QC, full population (16 accounts)
+      python -m app.main settlements-all --count 2  # Settlements QC, first 2 accounts only
+      python -m app.main bk                      # BK ODP QC, single account (cursor 0)
+      python -m app.main bk --cursor 2           # BK ODP QC, single account (cursor 2)
+      python -m app.main bk-all                  # BK ODP QC, full population (10 accounts)
+      python -m app.main bk-all --count 2        # BK ODP QC, first 2 accounts only
+      python -m app.main local                   # Settlements QC, local sequential demo
+      python -m app.main test                    # Settlements QC, 4-account targeted test suite
+      python -m app.main -v                      # any mode + verbose I/O (full agent payloads)
     """
     args = sys.argv[1:]
     verbose = "-v" in args or "--verbose" in args
@@ -1036,7 +1201,16 @@ def main() -> None:
         ci = args.index("--cursor")
         try:
             cursor = int(args[ci + 1])
-            args = args[:ci] + args[ci + 2:]  # remove --cursor N from further parsing
+            args = args[:ci] + args[ci + 2:]
+        except (IndexError, ValueError):
+            args = args[:ci] + args[ci + 1:]
+
+    count: int | None = None
+    if "--count" in args:
+        ci = args.index("--count")
+        try:
+            count = int(args[ci + 1])
+            args = args[:ci] + args[ci + 2:]
         except (IndexError, ValueError):
             args = args[:ci] + args[ci + 1:]
 
@@ -1047,6 +1221,16 @@ def main() -> None:
         run_local_sequential_demo()
     elif mode == "test":
         run_multi_account_test()
+    elif mode == "settlements-all":
+        kwargs = {"verbose": verbose}
+        if count is not None:
+            kwargs["total_accounts"] = count
+        run_settlements_full_population(**kwargs)
+    elif mode == "bk-all":
+        kwargs = {"verbose": verbose}
+        if count is not None:
+            kwargs["total_accounts"] = count
+        run_bk_full_population(**kwargs)
     elif mode == "bk":
         result = demo_workflow_bankruptcy_odp(verbose=verbose, cursor=cursor)
         print_flow_trace(result, verbose=verbose)

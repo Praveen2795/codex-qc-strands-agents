@@ -397,7 +397,7 @@ class OrchestratorOutputRecoveryHook(HookProvider):
             event.resume = self._RECOVERY_PROMPT
 
 
-def setup_project_logging(run_name: str = "demo_flow") -> Path:
+def setup_project_logging(run_name: str = "settlements_qc") -> Path:
     """Configure file logging for the project and return the run log path.
 
     Each run overwrites the same fixed file (<run_name>.log) so the logs/
