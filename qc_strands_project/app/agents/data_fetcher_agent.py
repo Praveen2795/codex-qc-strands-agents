@@ -10,7 +10,7 @@ from strands import Agent
 from app.config import load_prompt
 from app.logging_utils import ModelCallRetryHook, create_agent_callback_handler
 from app.models.factory import build_default_agent_model
-from app.tools.population_tools import get_population_batch
+from app.tools.settlement_review_population_tools import get_population_batch
 
 logger = logging.getLogger("qc_strands.agents.data_fetcher")
 

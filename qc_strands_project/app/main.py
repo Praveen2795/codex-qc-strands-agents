@@ -24,7 +24,7 @@ from app.agents.qc_decision_agent import build_qc_decision_agent, run_qc_decisio
 from app.agents.qc_validation_agent import build_qc_validation_agent
 from app.logging_utils import setup_project_logging, CompositeCallbackHandler
 from app.tools.arlog_tools import get_arlog_settlement_evidence
-from app.tools.population_tools import get_population_batch
+from app.tools.settlement_review_population_tools import get_population_batch
 from app.tools.tag_tools import get_account_tag_sif_presence
 
 logger = logging.getLogger("qc_strands.main")
