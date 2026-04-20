@@ -1,0 +1,92 @@
+[
+  {
+    "account_number": "200001",
+    "borrower_name": "Daniel Reyes",
+    "co_borrower_name": "Maria Reyes",
+    "bankruptcy_chapter": "CH7",
+    "balance": 18450.00,
+    "reason": "Bankruptcy Chapter 7 discharged — full balance unrecoverable",
+    "as_of_date": "2026-02-28"
+  },
+  {
+    "account_number": "200002",
+    "borrower_name": "Sandra Kim",
+    "co_borrower_name": null,
+    "bankruptcy_chapter": "CH7",
+    "balance": 32100.00,
+    "reason": "Bankruptcy Chapter 7 filed — charge-off timing under review",
+    "as_of_date": "2026-02-28"
+  },
+  {
+    "account_number": "200003",
+    "borrower_name": "James Holloway",
+    "co_borrower_name": "Patricia Holloway",
+    "bankruptcy_chapter": "CH13",
+    "balance": 9875.50,
+    "reason": "Bankruptcy Chapter 13 repayment plan active — charge-off status pending",
+    "as_of_date": "2026-02-28"
+  },
+  {
+    "account_number": "200004",
+    "borrower_name": "Tyrone Washington",
+    "co_borrower_name": null,
+    "bankruptcy_chapter": "CH7",
+    "balance": 22300.00,
+    "reason": "Bankruptcy Chapter 7 filed — scrub verification incomplete",
+    "as_of_date": "2026-02-28"
+  },
+  {
+    "account_number": "200005",
+    "borrower_name": "Linda Fernandez",
+    "co_borrower_name": "Carlos Fernandez",
+    "bankruptcy_chapter": "CH13",
+    "balance": 41500.75,
+    "reason": "Bankruptcy Chapter 13 filed — SLA and tag compliance under review",
+    "as_of_date": "2026-02-28"
+  },
+  {
+    "account_number": "200006",
+    "borrower_name": "Gregory Patel",
+    "co_borrower_name": null,
+    "bankruptcy_chapter": "CH7",
+    "balance": 7650.00,
+    "reason": "Bankruptcy Chapter 7 filed — charge-off notification date not yet recorded",
+    "as_of_date": "2026-02-28"
+  },
+  {
+    "account_number": "200007",
+    "borrower_name": "Vanessa Brooks",
+    "co_borrower_name": "Michael Brooks",
+    "bankruptcy_chapter": "CH7",
+    "balance": 15200.00,
+    "reason": "Bankruptcy Chapter 7 filed — tag and status unresolved",
+    "as_of_date": "2026-02-28"
+  },
+  {
+    "account_number": "200008",
+    "borrower_name": "Alicia Nguyen",
+    "co_borrower_name": null,
+    "bankruptcy_chapter": "CH13",
+    "balance": 27800.25,
+    "reason": "Bankruptcy Chapter 13 confirmed — charge-off processed within review period",
+    "as_of_date": "2026-02-28"
+  },
+  {
+    "account_number": "200009",
+    "borrower_name": "Harold Jensen",
+    "co_borrower_name": "Beverly Jensen",
+    "bankruptcy_chapter": "CH7",
+    "balance": 5100.00,
+    "reason": "Bankruptcy Chapter 7 filed — bankruptcy notification date missing from source",
+    "as_of_date": "2026-02-28"
+  },
+  {
+    "account_number": "200010",
+    "borrower_name": "Renee Okafor",
+    "co_borrower_name": null,
+    "bankruptcy_chapter": "CH7",
+    "balance": 13900.00,
+    "reason": "Bankruptcy Chapter 7 filed — tag absent and charge-off status unclear",
+    "as_of_date": "2026-02-28"
+  }
+]

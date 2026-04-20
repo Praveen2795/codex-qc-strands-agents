@@ -33,3 +33,23 @@ def load_tag_data() -> list[dict[str, Any]]:
 def load_arlog_data() -> list[dict[str, Any]]:
     """Load local AR log records used by the QC demo tools."""
     return _load_json_records("ar_logs.json")
+
+
+def load_bankruptcy_population_data() -> list[dict[str, Any]]:
+    """Load local bankruptcy ODP population records."""
+    return _load_json_records("bankruptcy_population.json")
+
+
+def load_chargeoff_status_data() -> list[dict[str, Any]]:
+    """Load local charge-off status records used by bankruptcy ODP tools."""
+    return _load_json_records("chargeoff_status_data.json")
+
+
+def load_bankruptcy_chargeoff_data() -> list[dict[str, Any]]:
+    """Load local bankruptcy notification and charge-off date records."""
+    return _load_json_records("bankruptcy_chargeoff_data.json")
+
+
+def load_bankruptcy_tags_data() -> list[dict[str, Any]]:
+    """Load local bankruptcy tag records."""
+    return _load_json_records("bankruptcy_tags_data.json")

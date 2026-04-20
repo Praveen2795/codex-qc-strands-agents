@@ -1,0 +1,42 @@
+[
+  {
+    "account_number": "200001",
+    "status_codes": ["CHARGE OFF"]
+  },
+  {
+    "account_number": "200002",
+    "status_codes": ["CHARGE OFF"]
+  },
+  {
+    "account_number": "200003",
+    "status_codes": ["FOLLOW_UP", "PENDING"]
+  },
+  {
+    "account_number": "200004",
+    "status_codes": ["CHARGE OFF"]
+  },
+  {
+    "account_number": "200005",
+    "status_codes": ["CHARGE OFF"]
+  },
+  {
+    "account_number": "200006",
+    "status_codes": ["CHARGE OFF"]
+  },
+  {
+    "account_number": "200007",
+    "status_codes": ["PENDING", "WRITTEN DOWN"]
+  },
+  {
+    "account_number": "200008",
+    "status_codes": ["CHARGE OFF", "FOLLOW_UP"]
+  },
+  {
+    "account_number": "200009",
+    "status_codes": ["CHARGE OFF"]
+  },
+  {
+    "account_number": "200010",
+    "status_codes": ["WRITTEN DOWN", "PENDING"]
+  }
+]

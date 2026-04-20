@@ -1,0 +1,52 @@
+[
+  {
+    "account_number": "200001",
+    "bankruptcy_notification_date": "2026-01-05",
+    "charge_off_notification_date": "2026-02-15"
+  },
+  {
+    "account_number": "200002",
+    "bankruptcy_notification_date": "2025-11-01",
+    "charge_off_notification_date": "2026-02-15"
+  },
+  {
+    "account_number": "200003",
+    "bankruptcy_notification_date": "2026-01-10",
+    "charge_off_notification_date": "2026-02-20"
+  },
+  {
+    "account_number": "200004",
+    "bankruptcy_notification_date": "2026-01-15",
+    "charge_off_notification_date": "2026-02-28"
+  },
+  {
+    "account_number": "200005",
+    "bankruptcy_notification_date": "2025-10-01",
+    "charge_off_notification_date": "2026-01-15"
+  },
+  {
+    "account_number": "200006",
+    "bankruptcy_notification_date": "2026-02-01",
+    "charge_off_notification_date": null
+  },
+  {
+    "account_number": "200007",
+    "bankruptcy_notification_date": "2026-01-20",
+    "charge_off_notification_date": "2026-02-25"
+  },
+  {
+    "account_number": "200008",
+    "bankruptcy_notification_date": "2026-01-08",
+    "charge_off_notification_date": "2026-02-28"
+  },
+  {
+    "account_number": "200009",
+    "bankruptcy_notification_date": null,
+    "charge_off_notification_date": "2026-02-10"
+  },
+  {
+    "account_number": "200010",
+    "bankruptcy_notification_date": "2026-01-12",
+    "charge_off_notification_date": "2026-02-01"
+  }
+]

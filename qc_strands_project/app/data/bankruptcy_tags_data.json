@@ -1,0 +1,42 @@
+[
+  {
+    "account_number": "200001",
+    "tags": ["Confirmed BK via Scrub", "BK FILED"]
+  },
+  {
+    "account_number": "200002",
+    "tags": ["Confirmed BK via Scrub"]
+  },
+  {
+    "account_number": "200003",
+    "tags": ["Confirmed BK via Scrub", "CH13 PLAN ACTIVE"]
+  },
+  {
+    "account_number": "200004",
+    "tags": ["SCRUB PENDING"]
+  },
+  {
+    "account_number": "200005",
+    "tags": ["BK CONFIRMED"]
+  },
+  {
+    "account_number": "200006",
+    "tags": ["Confirmed BK via Scrub"]
+  },
+  {
+    "account_number": "200007",
+    "tags": ["BK CONFIRMED", "SCRUB PENDING"]
+  },
+  {
+    "account_number": "200008",
+    "tags": ["Confirmed BK via Scrub", "CH13 FILED"]
+  },
+  {
+    "account_number": "200009",
+    "tags": ["Confirmed BK via Scrub"]
+  },
+  {
+    "account_number": "200010",
+    "tags": []
+  }
+]
