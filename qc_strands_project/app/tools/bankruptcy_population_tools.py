@@ -66,6 +66,7 @@ def get_bankruptcy_population_batch(
         has_more,
     )
     return {
+        "check": "population_batch",
         "accounts": accounts,
         "batch_size": len(accounts),
         "cursor": start_index,

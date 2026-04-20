@@ -59,7 +59,7 @@
         "title": "Collect charge-off status evidence",
         "objective": "Gather evidence showing whether the account has an explicit charge-off status code in the source system.",
         "preferred_agent": "qc_validation_agent",
-        "evidence_tools": ["get_chargeoff_status_evidence"],
+        "evidence_tools": ["get_chargeoff_tag_evidence"],
         "depends_on": ["pop-1"],
         "evaluation_rule_ids": [],
         "decision_policy": null,
@@ -144,7 +144,7 @@
       "title": "Account charged-off check",
       "description": "The account must have an explicit CHARGE OFF status code in the source used by the business process.",
       "evidence_check": "chargeoff_status_evidence",
-      "evidence_field": "chargeoff_found",
+      "evidence_field": "expected_tag_present",
       "applies_to_step": "acct-1b",
       "allowed_decisions": ["pass", "fail", "manual_review", "error"],
       "decision_matrix": [

@@ -20,7 +20,7 @@ _EXPECTED_BANKRUPTCY_TAG = "Confirmed BK via Scrub"
 
 
 @tool
-def get_chargeoff_status_evidence(account_number: str) -> dict:
+def get_chargeoff_tag_evidence(account_number: str) -> dict:
     """Return charge-off status evidence for one account.
 
     Checks whether the expected 'CHARGE OFF' status code is present in the
@@ -36,31 +36,38 @@ def get_chargeoff_status_evidence(account_number: str) -> dict:
 
     if not records:
         logger.info(
-            "chargeoff_status_check account_number=%s record_found=False expected_tag_present=False",
+            "chargeoff_tag_check account_number=%s record_found=False expected_tag_present=False",
             account_number,
         )
         return {
             "account_number": account_number,
-            "check": "chargeoff_status_evidence",
-            "chargeoff_found": False,
+            "check": "chargeoff_tag_evidence",
+            "expected_tag_present": False,
             "expected_tag_value": _EXPECTED_CHARGEOFF_TAG,
             "matching_tags": [],
         }
 
+    if len(records) > 1:
+        logger.warning(
+            "chargeoff_tag_check account_number=%s multiple_records_found=%s using_first",
+            account_number,
+            len(records),
+        )
+
     status_codes = records[0].get("status_codes", [])
     matching = [code for code in status_codes if code == _EXPECTED_CHARGEOFF_TAG]
-    chargeoff_found = bool(matching)
+    expected_tag_present = bool(matching)
 
     logger.info(
-        "chargeoff_status_check account_number=%s record_found=True chargeoff_found=%s matching_tags=%s",
+        "chargeoff_tag_check account_number=%s record_found=True expected_tag_present=%s matching_tags=%s",
         account_number,
-        chargeoff_found,
+        expected_tag_present,
         matching,
     )
     return {
         "account_number": account_number,
-        "check": "chargeoff_status_evidence",
-        "chargeoff_found": chargeoff_found,
+        "check": "chargeoff_tag_evidence",
+        "expected_tag_present": expected_tag_present,
         "expected_tag_value": _EXPECTED_CHARGEOFF_TAG,
         "matching_tags": matching,
     }
@@ -92,6 +99,13 @@ def get_bankruptcy_notification_and_chargeoff_dates(account_number: str) -> dict
             "bankruptcy_notification_date": None,
             "charge_off_date": None,
         }
+
+    if len(records) > 1:
+        logger.warning(
+            "bankruptcy_chargeoff_dates_check account_number=%s multiple_records_found=%s using_first",
+            account_number,
+            len(records),
+        )
 
     record = records[0]
     bk_date = record.get("bankruptcy_notification_date")
@@ -205,6 +219,13 @@ def get_bankruptcy_tag_evidence(account_number: str) -> dict:
             "expected_tag_value": _EXPECTED_BANKRUPTCY_TAG,
             "matching_tags": [],
         }
+
+    if len(records) > 1:
+        logger.warning(
+            "bankruptcy_tag_check account_number=%s multiple_records_found=%s using_first",
+            account_number,
+            len(records),
+        )
 
     tags = records[0].get("tags", [])
     matching = [tag for tag in tags if tag == _EXPECTED_BANKRUPTCY_TAG]
